@@ -1,0 +1,1 @@
+This folder contains the second component (the implant server) to BlueFire

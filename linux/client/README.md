@@ -1,0 +1,1 @@
+This folder contains the third component (the attacking client) to BlueFire
