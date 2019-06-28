@@ -7,20 +7,20 @@ import (
 )
 
 type Targets struct {
-	targets map[string]ble.Addr
+	targets map[string]ble.Advertisement
 	lock    sync.RWMutex
 }
 
 func NewTargets() Targets {
 	return Targets{
-		targets: map[string]ble.Addr{},
+		targets: map[string]ble.Advertisement{},
 		lock:    sync.RWMutex{},
 	}
 }
 
 func (targets *Targets) DropTargets() {
 	targets.lock.Lock()
-	targets.targets = map[string]ble.Addr{}
+	targets.targets = map[string]ble.Advertisement{}
 	targets.lock.Unlock()
 }
 
@@ -40,6 +40,6 @@ func (targets *Targets) Unlock() {
 	targets.lock.Unlock()
 }
 
-func (targets *Targets) Targets() map[string]ble.Addr {
-	return targets.targets
+func (targets *Targets) Targets() *map[string]ble.Advertisement {
+	return &targets.targets
 }
