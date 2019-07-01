@@ -58,3 +58,4 @@ func runCommand(command string, stdoutData *bytes.Buffer) {
 	} else {
 		fmt.Printf("Output error: %v\n", err)
 	}
+}
