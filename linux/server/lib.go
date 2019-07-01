@@ -36,9 +36,9 @@ func (srv *Stdout) ServeRead(req ble.Request, rsp ble.ResponseWriter) {
 
 }
 //this code is under construction
-func (srv *Stdout) ServeIndicate(req Request, n Notifier) {
+/*func (srv *Stdout) ServeIndicate(req Request, n Notifier) {
 	fmt.Printf("Indicate\n")
-}
+}*/
 
 //run the command
 func runCommand(command string, stdoutData *bytes.Buffer) {
