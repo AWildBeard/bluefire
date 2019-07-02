@@ -122,8 +122,12 @@ func (cntrl *Controller) ScanNow() error {
 	// can and can't see. This is done to control the targets list to
 	// only show valid targets.
 	var filter = func(a ble.Advertisement) bool {
-		if a.Connectable() /*&& a.LocalName() == "echo-server"*/ {
-			return true
+		if a.Connectable() {
+			for _, service := range a.Services() {
+				if service.Equal(serviceUUID) {
+					return true
+				}
+			}
 		}
 
 		return false

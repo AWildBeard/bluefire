@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"time"
 
 	"github.ibm.com/mmitchell/ble/linux"
 
@@ -66,9 +65,13 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 					writeSet = true
 					newConnection.write = val
 				} else if val.UUID.Equal(readUUID) {
-					dlog.Println("Set read")
-					readSet = true
-					newConnection.read = val
+					if (val.Property&ble.CharNotify) != 0 || (val.Property&ble.CharIndicate) != 0 {
+						dlog.Println("Set read")
+						readSet = true
+						newConnection.read = val
+					} else {
+						return Connection{}, fmt.Errorf("read UUID does not support Notify or Indicate")
+					}
 				}
 			}
 		} else {
@@ -100,31 +103,39 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 
 	// Be sure to close the BLE connection on a bad exit
 	newConnection.bleClient.CancelConnection()
-	return Connection{}, fmt.Errorf("Failed to set read and write!")
+	return Connection{}, fmt.Errorf("failed to set read and write")
 }
 
 func (cntn Connection) WriteCommand(cmd string) (string, error) {
-	dlog.Printf("Writing %v to the write characteristic\n", cmd)
-	/*
-		var (
-			cmdReady = make(chan bool, 1)
-		)
-
-		cntn.bleClient.Subscribe(cntn.read, true, func(rsp []byte) {
+	var (
+		cmdReady            = make(chan bool, 1)
+		subscriptionHandler = func(rsp []byte) {
+			dlog.Printf("Recieved indication from server: %v\n", rsp)
 			cmdReady <- true
-		})
+		}
+	)
 
-		// Be sure to unsubscribe
-		defer cntn.bleClient.Unsubscribe(cntn.read, true)
-	*/
+	dlog.Printf("Subscribing to %v\n", readUUID)
+	if err := cntn.bleClient.Subscribe(cntn.read, true, subscriptionHandler); err != nil {
+		return "", err
+	}
+	dlog.Printf("Subscribed to %v\n", readUUID)
 
+	// Be sure to unsubscribe
+	defer func() {
+		dlog.Printf("Unsubscribing from %v\n", readUUID)
+		cntn.bleClient.ClearSubscriptions()
+		dlog.Printf("Unsubscribed from %v\n", readUUID)
+	}()
+
+	dlog.Printf("Writing %v to the write characteristic\n", cmd)
 	if err := cntn.bleClient.WriteCharacteristic(cntn.write, []byte(cmd), false); err != nil {
 		return "", err
 	}
 
 	dlog.Printf("Awaiting indication from server")
-	time.Sleep(4 * time.Second) // Arbitrary until we sort out receiving data from the server
-	//<-cmdReady
+	//time.Sleep(4 * time.Second) // Arbitrary until we sort out receiving data from the server
+	<-cmdReady
 
 	dlog.Printf("Reading from the read characteristic: ")
 	var (
