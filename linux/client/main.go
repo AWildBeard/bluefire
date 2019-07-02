@@ -53,7 +53,7 @@ func main() {
 	printer.Println(" | _ \\| || || |/ -_)  | __|  | || '_|/ -_)  	")
 	printer.Println(" |___/|_| \\_,_|\\___|  |_|    |_||_|  \\___|  	")
 	printer.Println("\033[0m")
-	printer.Println("\033[4m\033[1mUse 'help' to see a list of help topics.\033[0m")
+	printer.Println("\033[4m\033[1mUse 'help' to see a list of help topics.\033[m")
 	printer.Println()
 
 	dlog.Println("Creating bluetooth controller")
@@ -142,9 +142,10 @@ func main() {
 			}
 		case "purge-targets":
 			controller.DropTargets()
-		case "info":
+		case "connect":
 			if len(cmds) < 2 {
-				printer.Println("'info' expects a target as a parameter")
+				printer.Println("'connect' expects a target as a parameter")
+				continue
 			}
 
 			if cmds[1][0] != '#' {
@@ -152,7 +153,61 @@ func main() {
 				continue
 			}
 
+			if err := controller.Connect(cmds[1]); err != nil {
+				printer.Printf("%v\n", err)
+			}
+
+		case "shell":
+			if len(cmds) < 2 {
+				printer.Println("'shell' expects a target as a parameter")
+				continue
+			}
+
+			if cmds[1][0] != '#' {
+				printer.Println("Please select a target by its '#number'")
+				continue
+			}
+
+			var shellID = cmds[1]
+
+			if !controller.IsConnected(shellID) {
+				printer.Printf("Please connect to %s first using the 'connect' command\n", shellID)
+				continue
+			}
+
+			// Wait until the user types exit before exiting the remote shell
+			for input != "exit" {
+				remoteShellPrompt(shellID)
+				input, _ = reader.ReadString('\n')
+				input = strings.TrimRight(input, "\r\n")
+				switch input {
+				case "exit":
+					break
+				default:
+					// Send the typed command to the remote and get the response
+					if rsp, err := controller.SendCommand(shellID, input); err == nil {
+						printer.Print(rsp)
+					} else {
+						printer.Printf("%v\n", err)
+					}
+				}
+			}
+
+			printer.Printf("Exiting shell %s\n", shellID)
+		case "info":
+			if len(cmds) < 2 {
+				printer.Println("'info' expects a target as a parameter")
+				continue
+			}
+
+			if cmds[1][0] != '#' {
+				printer.Println("Please select a target by its '#number'")
+				continue
+			}
+
+			// Get the target the user wants info for
 			if target, err := controller.GetTarget(cmds[1]); err == nil {
+				// Print the infor about the target
 				printer.Printf("Target information for: %v\n", target.Addr())
 				printer.Printf("\tRSSI: %v\n", target.RSSI())
 
@@ -188,7 +243,12 @@ func clearScreen() {
 
 func prompt() {
 	fmt.Printf("\033[2K\r")
-	printer.Print("\033[38;5;21mbf\033[38;5;196m>\033[0m ")
+	printer.Print("\033[38;5;21mbf\033[38;5;196m>\033[m ")
+}
+
+func remoteShellPrompt(id string) {
+	fmt.Printf("\033[2K\r")
+	printer.Printf("\033[38;5;21mbf\033[38;5;226m/\033[m%s\033[38;5;196m>\033[m ", id)
 }
 
 func fivePrint(words []string) {

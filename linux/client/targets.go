@@ -6,7 +6,9 @@ import (
 	"github.ibm.com/mmitchell/ble"
 )
 
+// Targets is a data structure to hold our scan data
 type Targets struct {
+	// Targets are defined by our scan results
 	targets map[string]ble.Advertisement
 	lock    sync.RWMutex
 }

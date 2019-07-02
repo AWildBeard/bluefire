@@ -22,8 +22,9 @@ func ValidCommands() []string {
 
 func ValidActions() []string {
 	return []string{"\033[1mkill \033[0;4maction\033[0m",
-		"\033[1mscan\033[m",
-		"\033[1mpurge-targets\033[m"}
+		"\033[1mscan\033[m", "\033[1mpurge-targets\033[m",
+		"\033[1mconnect\033[m \033[4mtarget\033[m",
+		"\033[1mshell\033[m \033[4mtarget\033[m"}
 }
 
 func ValidUtilities() []string {

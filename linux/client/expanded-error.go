@@ -4,6 +4,9 @@ import (
 	"fmt"
 )
 
+// Error allows us to more granuarly control asynchronous errors and perform actions
+// based on those errors. Error specifically is used for the scan functionality of
+// this program
 type Error struct {
 	err    error
 	source string

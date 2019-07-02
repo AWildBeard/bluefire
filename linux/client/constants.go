@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.ibm.com/mmitchell/ble"
 	"github.ibm.com/mmitchell/ble/linux/hci/cmd"
 )
 
@@ -19,4 +20,7 @@ var (
 		MinimumCELength:       0xFFFF,    // 0x0000 - 0xFFFF; N * 0.625 msec
 		MaximumCELength:       0xFFFF,    // 0x0000 - 0xFFFF; N * 0.625 msec
 	}
+	serviceUUID = ble.MustParse("10a47006-0001-4c30-a9b7-ca7d92240018")
+	writeUUID   = ble.MustParse("10a47006-0002-4c30-a9b7-ca7d92240018")
+	readUUID    = ble.MustParse("10a47006-0003-4c30-a9b7-ca7d92240018")
 )
