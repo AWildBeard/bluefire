@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -10,15 +11,18 @@ import (
 	"github.ibm.com/mmitchell/ble/linux"
 )
 
+var (
+	ErrChain chan Error
+)
+
 // Controller is the main gateway to interfacing and interacting with the ble
 // library and contains a lot of our buisiness logic about how to control and
 // interact with connect clients, etc.
 type Controller struct {
-	errChain chan Error
-	bleDev   *linux.Device
-	clients  map[string]Connection
-	actions  Actions
-	targets  Targets
+	bleDev  *linux.Device
+	clients map[string]Connection
+	actions Actions
+	targets Targets
 }
 
 // NewController returns an initialized controller ready to be accessed and modified
@@ -39,14 +43,14 @@ func NewController() *Controller {
 		os.Exit(1)
 	}
 
+	ErrChain = make(chan Error, 10)
 	// Declare the new controller. This is actually the controller that
 	// will be returned to the caller
 	var newController = Controller{
-		errChain: make(chan Error, 10),
-		bleDev:   dev,
-		clients:  map[string]Connection{},
-		actions:  NewActions(),
-		targets:  NewTargets(),
+		bleDev:  dev,
+		clients: map[string]Connection{},
+		actions: NewActions(),
+		targets: NewTargets(),
 	}
 
 	// Pre-emptively start scanning to lessen the time for the caller to
@@ -64,7 +68,7 @@ func NewController() *Controller {
 	go func() {
 		for true {
 			select {
-			case err := <-newController.errChain:
+			case err := <-ErrChain:
 				if fmt.Sprintf("%v", err.err) == "context canceled" {
 					continue
 				}
@@ -144,7 +148,7 @@ func (cntrl *Controller) ScanNow() error {
 		if err := ble.Scan(contxt, false, handler, filter); err != nil {
 			// If an error comes back, wrap it so we can serialize it,
 			// and pass it to the controllers error watcher.
-			cntrl.errChain <- Error{
+			ErrChain <- Error{
 				err,
 				"scan",
 			}
@@ -273,7 +277,7 @@ func (cntrl *Controller) Connect(id string) error {
 // SendCommand allows a caller to cause a specific client to send a specific
 // command. The function uses the user-friendly identifier to determine
 // which client to send the command on.
-func (cntrl *Controller) SendCommand(id, cmd string) (string, error) {
+func (cntrl *Controller) SendCommand(id, cmd string) (*io.PipeReader, error) {
 	var actionID = fmt.Sprintf("conn-%s", id)
 	// Make sure the client is in fact connected before we attempt to send
 	// the command
@@ -281,7 +285,7 @@ func (cntrl *Controller) SendCommand(id, cmd string) (string, error) {
 		return cntrl.clients[actionID].WriteCommand(cmd)
 	}
 
-	return "", fmt.Errorf("connection id %v not found", id)
+	return &io.PipeReader{}, fmt.Errorf("connection id %v not found", id)
 }
 
 // IsConnected allows a caller to determine if a user-friendly ID is tied to an

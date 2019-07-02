@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"io"
 
 	"github.ibm.com/mmitchell/ble/linux"
 
@@ -27,6 +27,7 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		err           error
 		readSet       bool
 		writeSet      bool
+		remoteMTU     int
 		profile       *ble.Profile
 		newConnection = Connection{}
 		newCncl       = func() {
@@ -45,7 +46,14 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		goto fail
 	}
 
-	// TODO: Exchange MTU and enable DLE
+	// Exchange MTU
+	newConnection.bleClient.Conn().SetRxMTU(512)
+	if remoteMTU, err = newConnection.bleClient.ExchangeMTU(512); err == nil {
+		newConnection.bleClient.Conn().SetTxMTU(remoteMTU)
+		dlog.Printf("The remote mtu is %v\n", remoteMTU-3)
+	}
+
+	// TODO: Enable DLE
 
 	// Discover the remote profile
 	if profile, err = newConnection.bleClient.DiscoverProfile(true); err == nil {
@@ -92,7 +100,7 @@ fail:
 	return Connection{}, err
 }
 
-func (cntn Connection) WriteCommand(cmd string) (string, error) {
+func (cntn Connection) WriteCommand(cmd string) (*io.PipeReader, error) {
 	var (
 		cmdReady            = make(chan bool, 1)
 		subscriptionHandler = func(rsp []byte) {
@@ -103,7 +111,7 @@ func (cntn Connection) WriteCommand(cmd string) (string, error) {
 
 	dlog.Printf("Subscribing to %v\n", readUUID)
 	if err := cntn.bleClient.Subscribe(cntn.read, true, subscriptionHandler); err != nil {
-		return "", err
+		return &io.PipeReader{}, err
 	}
 	dlog.Printf("Subscribed to %v\n", readUUID)
 
@@ -116,29 +124,38 @@ func (cntn Connection) WriteCommand(cmd string) (string, error) {
 
 	dlog.Printf("Writing %v to the write characteristic\n", cmd)
 	if err := cntn.bleClient.WriteCharacteristic(cntn.write, []byte(cmd), false); err != nil {
-		return "", err
+		return &io.PipeReader{}, err
 	}
 
 	dlog.Printf("Awaiting indication from server")
 	//time.Sleep(4 * time.Second) // Arbitrary until we sort out receiving data from the server
 	<-cmdReady
 
-	dlog.Printf("Reading from the read characteristic: ")
-	var (
-		buf   = bytes.NewBuffer(make([]byte, 0, 4096))
-		bytes []byte
-		err   error
-	)
+	var reader, writer = io.Pipe()
 
-	// While the remote has data for us to read, read and store that data to return later.
-	for bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read); err == nil && len(bytes) > 0; bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read) {
-		dlog.Printf("Reading %v bytes\n", len(bytes))
-		buf.Write(bytes)
-	}
+	go func(writer *io.PipeWriter) {
+		dlog.Printf("Reading from the read characteristic: ")
+		var (
+			bytes []byte
+			err   error
+		)
 
-	if err != nil {
-		return "", err
-	}
+		// While the remote has data for us to read, read and store that data to return later.
+		for bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read); err == nil && len(bytes) > 0; bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read) {
+			dlog.Printf("Reading %v bytes\n", len(bytes))
+			writer.Write(bytes)
+		}
 
-	return string(buf.Bytes()), nil
+		err = writer.Close()
+
+		if err != nil {
+			ErrChain <- Error{
+				err,
+				"iopipe",
+			}
+		}
+
+	}(writer)
+
+	return reader, nil
 }

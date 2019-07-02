@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -186,7 +187,10 @@ func main() {
 				default:
 					// Send the typed command to the remote and get the response
 					if rsp, err := controller.SendCommand(shellID, input); err == nil {
-						printer.Print(rsp)
+						var bytes = make([]byte, 512)
+						for _, err := rsp.Read(bytes); err != io.EOF; _, err = rsp.Read(bytes) {
+							printer.Printf("%s", bytes)
+						}
 					} else {
 						printer.Printf("%v\n", err)
 					}
