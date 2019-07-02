@@ -260,6 +260,9 @@ func (cntrl *Controller) Connect(id string) error {
 
 			// Store the client for the connection
 			cntrl.clients[actionID] = newClient
+			//run to retrieve cccd from server
+			cntrl.clients[actionID].bleClient.DiscoverProfile(true)
+
 		} else {
 			return err
 		}

@@ -69,6 +69,8 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 						dlog.Println("Set read")
 						readSet = true
 						newConnection.read = val
+						dlog.Printf("Initial CCCD location in readSet: %v \n", newConnection.read.CCCD)
+
 					} else {
 						return Connection{}, fmt.Errorf("read UUID does not support Notify or Indicate")
 					}
@@ -114,7 +116,10 @@ func (cntn Connection) WriteCommand(cmd string) (string, error) {
 			cmdReady <- true
 		}
 	)
-
+	
+	if cntn.read.CCCD == nil {
+		dlog.Printf("Debug info: current connection CCCD: %v, Current characteristic UUID: %v\n", "nil", cntn.read.UUID)
+	}
 	dlog.Printf("Subscribing to %v\n", readUUID)
 	if err := cntn.bleClient.Subscribe(cntn.read, true, subscriptionHandler); err != nil {
 		return "", err
