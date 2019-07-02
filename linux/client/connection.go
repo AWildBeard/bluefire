@@ -15,7 +15,6 @@ import (
 type Connection struct {
 	bleClient ble.Client
 	context   context.Context
-	service   *ble.Characteristic
 	write     *ble.Characteristic
 	read      *ble.Characteristic
 }
@@ -25,74 +24,56 @@ type Connection struct {
 func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 	var (
 		cntx, cncl    = context.WithCancel(context.Background())
+		err           error
 		readSet       bool
 		writeSet      bool
+		profile       *ble.Profile
 		newConnection = Connection{}
+		newCncl       = func() {
+			newConnection.bleClient.CancelConnection()
+			dlog.Println("BLE Connection Cancelled")
+			cncl()
+		}
 	)
 
 	// Initiate the connection
 	dlog.Printf("Dialing %v\n", addr.String())
-	if newClient, err := dev.Dial(cntx, addr); err == nil {
+	if newConnection.bleClient, err = dev.Dial(cntx, addr); err == nil {
 		dlog.Printf("Connected to %v\n", addr.String())
-		newConnection.bleClient = newClient
 	} else {
 		dlog.Printf("Failed to connect to %v: %v\n", addr.String(), err)
-		return Connection{}, err
+		goto fail
 	}
 
 	// TODO: Exchange MTU and enable DLE
 
-	// Hunt for the service we need
-	if services, err := newConnection.bleClient.DiscoverServices([]ble.UUID{serviceUUID}); err == nil {
-		dlog.Println("Found service")
-		if len(services) != 1 {
-			newConnection.bleClient.CancelConnection()
-			return Connection{}, fmt.Errorf("incorrect amount of services on remote host")
-		}
-
-		// Hunt for the characteristics we need
-		if characteristics, err := newConnection.bleClient.DiscoverCharacteristics([]ble.UUID{writeUUID, readUUID}, services[0]); err == nil {
-			dlog.Println("Found characteristics")
-			if len(characteristics) != 2 {
-				newConnection.bleClient.CancelConnection()
-				return Connection{}, fmt.Errorf("incorrect amount of chracteristics on remote service")
-			}
-
-			// Make sure we find the correct characteristics
-			for _, val := range characteristics {
-				if val.UUID.Equal(writeUUID) {
-					dlog.Println("Set write")
-					writeSet = true
-					newConnection.write = val
-				} else if val.UUID.Equal(readUUID) {
-					if (val.Property&ble.CharNotify) != 0 || (val.Property&ble.CharIndicate) != 0 {
-						dlog.Println("Set read")
-						readSet = true
-						newConnection.read = val
-						dlog.Printf("Initial CCCD location in readSet: %v \n", newConnection.read.CCCD)
-
-					} else {
-						return Connection{}, fmt.Errorf("read UUID does not support Notify or Indicate")
+	// Discover the remote profile
+	if profile, err = newConnection.bleClient.DiscoverProfile(true); err == nil {
+		// Hunt for the service we need
+		for _, val := range profile.Services {
+			if val.UUID.Equal(serviceUUID) {
+				// Hunt for the characteristics we need
+				for _, val := range val.Characteristics {
+					if val.UUID.Equal(writeUUID) {
+						dlog.Println("Set write")
+						writeSet = true
+						newConnection.write = val
+					} else if val.UUID.Equal(readUUID) {
+						if (val.Property&ble.CharNotify) != 0 || (val.Property&ble.CharIndicate) != 0 {
+							dlog.Println("Set read")
+							readSet = true
+							newConnection.read = val
+							dlog.Printf("Attribute %v CCCD: %v \n", val.UUID, val.UUID)
+						} else {
+							newConnection.bleClient.CancelConnection()
+							dlog.Printf("%v does not allow Notify or Indicate\n", val.UUID)
+							err = fmt.Errorf("read UUID does not support Notify or Indicate")
+							goto fail
+						}
 					}
 				}
 			}
-		} else {
-			// Close the BLE connection
-			newConnection.bleClient.CancelConnection()
-			return Connection{}, fmt.Errorf("%v", err)
 		}
-	} else {
-		// Close the BLE connection
-		newConnection.bleClient.CancelConnection()
-		return Connection{}, fmt.Errorf("%v", err)
-	}
-
-	// Create a context.CancelFunc override to also close the BLE connection
-	// when the context is canceled
-	var newCncl = func() {
-		newConnection.bleClient.CancelConnection()
-		dlog.Println("BLE Connection Cancelled")
-		cncl()
 	}
 
 	// Make sure we found both attrs
@@ -103,9 +84,12 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		return newConnection, nil
 	}
 
+	err = fmt.Errorf("write and/or read characteristics not found")
+
+fail:
 	// Be sure to close the BLE connection on a bad exit
 	newConnection.bleClient.CancelConnection()
-	return Connection{}, fmt.Errorf("failed to set read and write")
+	return Connection{}, err
 }
 
 func (cntn Connection) WriteCommand(cmd string) (string, error) {
@@ -116,10 +100,7 @@ func (cntn Connection) WriteCommand(cmd string) (string, error) {
 			cmdReady <- true
 		}
 	)
-	
-	if cntn.read.CCCD == nil {
-		dlog.Printf("Debug info: current connection CCCD: %v, Current characteristic UUID: %v\n", "nil", cntn.read.UUID)
-	}
+
 	dlog.Printf("Subscribing to %v\n", readUUID)
 	if err := cntn.bleClient.Subscribe(cntn.read, true, subscriptionHandler); err != nil {
 		return "", err
