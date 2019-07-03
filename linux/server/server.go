@@ -42,6 +42,7 @@ func main() {
 	//make the data buffers
 
 	//create stdout
+	btStdoutServer.c = make(chan struct{}, 1)
 	btStdoutServer.Data = bytes.NewBuffer(make([]byte, 511))
 	StdoutCharacteristic = newStdout(btStdoutServer, btCharacteristicStdoutUUID)
 
@@ -73,7 +74,6 @@ func newStdin(handler *Stdin, UUID string) *ble.Characteristic {
 func newStdout(handler *Stdout, UUID string) *ble.Characteristic {
 	var characteristic = ble.NewCharacteristic(ble.MustParse(UUID))
 	characteristic.HandleRead(handler)
-	//not quite ready yet
-	//characteristic.HandleIndicate(handler)
+	characteristic.HandleIndicate(handler)
 	return characteristic
 }
