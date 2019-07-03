@@ -4,19 +4,56 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.ibm.com/mmitchell/ble/linux"
 
 	"github.ibm.com/mmitchell/ble"
 )
 
+type Connections struct {
+	lock        sync.RWMutex
+	connections map[string]Connection
+}
+
+func NewConnections() Connections {
+	return Connections{
+		sync.RWMutex{},
+		map[string]Connection{},
+	}
+}
+
+func (cons *Connections) Lock() {
+	cons.lock.Lock()
+}
+
+func (cons *Connections) Unlock() {
+	cons.lock.Unlock()
+}
+
+func (cons *Connections) RLock() {
+	cons.lock.RLock()
+}
+
+func (cons *Connections) RUnlock() {
+	cons.lock.RUnlock()
+}
+
+func (cons *Connections) Connections() *map[string]Connection {
+	return &cons.connections
+}
+
 // Connection holds a single BLE connection that is used to control and interact
 // with remote hosts
 type Connection struct {
-	bleClient ble.Client
-	context   context.Context
-	write     *ble.Characteristic
-	read      *ble.Characteristic
+	bleClient        ble.Client
+	context          context.Context
+	write            *ble.Characteristic
+	writePipe        *io.PipeWriter
+	read             *ble.Characteristic
+	readPipe         *io.PipeReader
+	readIndication   chan bool
+	remoteIndication chan bool
 }
 
 // NewConnection returns a new initialized connection that can be used immediately
@@ -30,11 +67,8 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		remoteMTU     int
 		profile       *ble.Profile
 		newConnection = Connection{}
-		newCncl       = func() {
-			newConnection.bleClient.CancelConnection()
-			dlog.Println("BLE Connection Cancelled")
-			cncl()
-		}
+		shutdown      = make(chan bool, 1)
+		newCncl       func()
 	)
 
 	// Initiate the connection
@@ -44,6 +78,15 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 	} else {
 		dlog.Printf("Failed to connect to %v: %v\n", addr.String(), err)
 		goto fail
+	}
+
+	// Must declare after a new connection has been created
+	newCncl = func() {
+		shutdown <- true
+		newConnection.bleClient.ClearSubscriptions()
+		newConnection.bleClient.CancelConnection()
+		dlog.Println("BLE Connection Cancelled")
+		cncl()
 	}
 
 	// Exchange MTU
@@ -88,6 +131,67 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 	if readSet && writeSet {
 		cntx = context.WithValue(cntx, "cancel", context.CancelFunc(newCncl))
 		newConnection.context = cntx
+
+		// Bootstrap the indications and goroutine responsible from reading from
+		// these now-verified attrs
+		newConnection.readIndication = make(chan bool, 2)
+		newConnection.remoteIndication = make(chan bool, 1)
+		var (
+			subscriptionHandler = func(rsp []byte) {
+				dlog.Printf("Recieved indication from server: %v\n", rsp)
+				newConnection.remoteIndication <- true
+			}
+		)
+
+		dlog.Printf("Subscribing to %v\n", readUUID)
+		if err = newConnection.bleClient.Subscribe(newConnection.read, true, subscriptionHandler); err != nil {
+			dlog.Printf("Failed to subscribe to %v\n", readUUID)
+			goto fail
+		}
+		dlog.Printf("Subscribed to %v\n", readUUID)
+
+		dlog.Printf("Starting persistent reader thread")
+		newConnection.readPipe, newConnection.writePipe = io.Pipe()
+
+		go func(connection *Connection) {
+			for true {
+				select {
+				case <-shutdown:
+					connection.writePipe.Close()
+					return
+				case <-connection.remoteIndication:
+					dlog.Printf("Recieved remote indication\n")
+					connection.readIndication <- true
+					dlog.Printf("Triggering 'starting' local indication\n")
+					var (
+						bytes []byte
+						err   error
+					)
+
+					dlog.Printf("Reading from the read characteristic: ")
+					// While the remote has data for us to read, read and store that data to return later.
+					for bytes, err = connection.bleClient.ReadCharacteristic(connection.read); err == nil && len(bytes) > 0; bytes, err = connection.bleClient.ReadCharacteristic(connection.read) {
+						dlog.Printf("Writing %v bytes to pipe\n", len(bytes))
+						connection.writePipe.Write(bytes)
+						dlog.Printf("Wrote %v bytes to pipe\n", len(bytes))
+					}
+
+					dlog.Printf("Triggering 'finished' local indication\n")
+					connection.readIndication <- true
+					dlog.Printf("Triggered 'finished' local indication")
+
+					connection.writePipe.Write([]byte{})
+
+					if err != nil {
+						ErrChain <- Error{
+							err,
+							"iopipe",
+						}
+					}
+				}
+			}
+		}(&newConnection)
+
 		// Only then return a valid conneciton
 		return newConnection, nil
 	}
@@ -100,62 +204,17 @@ fail:
 	return Connection{}, err
 }
 
-func (cntn Connection) WriteCommand(cmd string) (*io.PipeReader, error) {
+func (cntn Connection) WriteCommand(cmd string) error {
 	var (
-		cmdReady            = make(chan bool, 1)
-		subscriptionHandler = func(rsp []byte) {
-			dlog.Printf("Recieved indication from server: %v\n", rsp)
-			cmdReady <- true
-		}
+		err error
 	)
 
-	dlog.Printf("Subscribing to %v\n", readUUID)
-	if err := cntn.bleClient.Subscribe(cntn.read, true, subscriptionHandler); err != nil {
-		return &io.PipeReader{}, err
-	}
-	dlog.Printf("Subscribed to %v\n", readUUID)
-
-	// Be sure to unsubscribe
-	defer func() {
-		dlog.Printf("Unsubscribing from %v\n", readUUID)
-		cntn.bleClient.ClearSubscriptions()
-		dlog.Printf("Unsubscribed from %v\n", readUUID)
-	}()
-
 	dlog.Printf("Writing %v to the write characteristic\n", cmd)
-	if err := cntn.bleClient.WriteCharacteristic(cntn.write, []byte(cmd), false); err != nil {
-		return &io.PipeReader{}, err
+	if err = cntn.bleClient.WriteCharacteristic(cntn.write, []byte(cmd), false); err != nil {
+		dlog.Printf("Failed to write %v to the write characteristic\n", cmd)
+		return err
 	}
+	dlog.Printf("Wrote %v to the write characteristic\n", cmd)
 
-	dlog.Printf("Awaiting indication from server")
-	//time.Sleep(4 * time.Second) // Arbitrary until we sort out receiving data from the server
-	<-cmdReady
-
-	var reader, writer = io.Pipe()
-
-	go func(writer *io.PipeWriter) {
-		dlog.Printf("Reading from the read characteristic: ")
-		var (
-			bytes []byte
-			err   error
-		)
-
-		// While the remote has data for us to read, read and store that data to return later.
-		for bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read); err == nil && len(bytes) > 0; bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read) {
-			dlog.Printf("Reading %v bytes\n", len(bytes))
-			writer.Write(bytes)
-		}
-
-		err = writer.Close()
-
-		if err != nil {
-			ErrChain <- Error{
-				err,
-				"iopipe",
-			}
-		}
-
-	}(writer)
-
-	return reader, nil
+	return err
 }

@@ -3,7 +3,8 @@ LDFLAGS=
 GOOS=
 GOARCH=
 OUT=bluefire
-SRC=*.go
+
+.PHONY: release
 
 all: help
 
@@ -21,7 +22,10 @@ amd64-linux-env:
 	$(eval GOARCH=amd64)
 
 arm-linux amd64-linux:
-	GOOS=${GOOS} GOARCH=${GOARCH} ${BUILD} ${LDFLAGS} -o ${OUT} ${SRC}
+	GOOS=${GOOS} GOARCH=${GOARCH} ${BUILD} -ldflags="${LDFLAGS}" -o ${OUT}
+
+release:
+	$(eval LDFLAGS=-w -s)
 
 deploy:
 	scp ${OUT} pi-2:

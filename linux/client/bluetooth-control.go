@@ -19,10 +19,10 @@ var (
 // library and contains a lot of our buisiness logic about how to control and
 // interact with connect clients, etc.
 type Controller struct {
-	bleDev  *linux.Device
-	clients map[string]Connection
-	actions Actions
-	targets Targets
+	bleDev      *linux.Device
+	connections Connections
+	actions     Actions
+	targets     Targets
 }
 
 // NewController returns an initialized controller ready to be accessed and modified
@@ -47,10 +47,10 @@ func NewController() *Controller {
 	// Declare the new controller. This is actually the controller that
 	// will be returned to the caller
 	var newController = Controller{
-		bleDev:  dev,
-		clients: map[string]Connection{},
-		actions: NewActions(),
-		targets: NewTargets(),
+		bleDev:      dev,
+		connections: NewConnections(),
+		actions:     NewActions(),
+		targets:     NewTargets(),
 	}
 
 	// Pre-emptively start scanning to lessen the time for the caller to
@@ -257,13 +257,23 @@ func (cntrl *Controller) Connect(id string) error {
 	if addr, err := cntrl.GetTarget(id); err == nil {
 		if newClient, err := NewConnection(cntrl.bleDev, addr.Addr()); err == nil {
 			dlog.Printf("Established connection to %s\n", id)
-			cntrl.actions.Lock()
+
+			var newContext = context.WithValue(newClient.context, "cancel", context.CancelFunc(func() {
+				cntrl.connections.Lock()
+				delete(*cntrl.connections.Connections(), actionID)
+				cntrl.connections.Unlock()
+				newClient.context.Value("cancel").(context.CancelFunc)()
+			}))
+
 			// Connection successful, so store a cancel func to close the connection.
-			(*cntrl.actions.Actions())[actionID] = newClient.context
+			cntrl.actions.Lock()
+			(*cntrl.actions.Actions())[actionID] = newContext
 			cntrl.actions.Unlock()
 
 			// Store the client for the connection
-			cntrl.clients[actionID] = newClient
+			cntrl.connections.Lock()
+			(*cntrl.connections.Connections())[actionID] = newClient
+			cntrl.connections.Unlock()
 		} else {
 			return err
 		}
@@ -277,15 +287,27 @@ func (cntrl *Controller) Connect(id string) error {
 // SendCommand allows a caller to cause a specific client to send a specific
 // command. The function uses the user-friendly identifier to determine
 // which client to send the command on.
-func (cntrl *Controller) SendCommand(id, cmd string) (*io.PipeReader, error) {
-	var actionID = fmt.Sprintf("conn-%s", id)
+func (cntrl *Controller) SendCommand(id, cmd string) (*io.PipeReader, *chan bool, error) {
+	var (
+		actionID     = fmt.Sprintf("conn-%s", id)
+		reader       *io.PipeReader
+		indicateChan *chan bool
+		err          = fmt.Errorf("connection id %v not found", id)
+	)
+
 	// Make sure the client is in fact connected before we attempt to send
 	// the command
 	if cntrl.IsConnected(id) {
-		return cntrl.clients[actionID].WriteCommand(cmd)
+		cntrl.connections.RLock()
+		var connections = cntrl.connections.Connections()
+		var connection = (*connections)[actionID]
+		reader = connection.readPipe
+		indicateChan = &connection.readIndication
+		err = connection.WriteCommand(cmd)
+		cntrl.connections.RUnlock()
 	}
 
-	return &io.PipeReader{}, fmt.Errorf("connection id %v not found", id)
+	return reader, indicateChan, err
 }
 
 // IsConnected allows a caller to determine if a user-friendly ID is tied to an
@@ -293,7 +315,9 @@ func (cntrl *Controller) SendCommand(id, cmd string) (*io.PipeReader, error) {
 func (cntrl *Controller) IsConnected(id string) bool {
 	var actionID = fmt.Sprintf("conn-%s", id)
 
-	_, ok := cntrl.clients[actionID]
+	cntrl.connections.RLock()
+	_, ok := (*cntrl.connections.Connections())[actionID]
+	cntrl.connections.RUnlock()
 
 	return ok
 }
