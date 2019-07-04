@@ -63,6 +63,7 @@ func main() {
 		controller   = NewController()
 		interupts    = make(chan os.Signal, 1)
 		stdinReader  = bufio.NewReader(os.Stdin)
+		stdoutWriter = bufio.NewWriter(os.Stdout)
 		cmdRunning   = bit.NewBit()
 		currentShell = ""
 		inShell      = bit.NewBit()
@@ -138,7 +139,7 @@ func main() {
 		case "shell":
 			currentShell = cmds[1]
 			inShell.Set()
-			shellCmd(controller, stdinReader, cmds)
+			shellCmd(controller, stdinReader, stdoutWriter, cmds)
 			inShell.Unset()
 		case "info":
 			infoCmd(controller, cmds)

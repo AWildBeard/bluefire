@@ -64,7 +64,7 @@ func connectCmd(controller *Controller, cmds []string) {
 	}
 }
 
-func shellCmd(controller *Controller, stdinReader *bufio.Reader, cmds []string) {
+func shellCmd(controller *Controller, stdinReader *bufio.Reader, stdoutWriter *bufio.Writer, cmds []string) {
 	var (
 		shellID = cmds[1]
 		input   string
@@ -94,29 +94,44 @@ func shellCmd(controller *Controller, stdinReader *bufio.Reader, cmds []string) 
 		case "exit":
 			break
 		default:
-			// Send the typed command to the remote and get the response
+			// Send the typed command to the remote and get the response reader
 			if reader, indications, err := controller.SendCommand(shellID, input); err == nil {
-				dlog.Printf("Awaiting local indication")
+				dlog.Printf("Awaiting local indication\n")
+				// Await the reader routine to tell us that it's recieved the indication
+				// from the server that there is content to be read
 				if <-*indications {
-					dlog.Printf("Received indication for reading")
+					dlog.Printf("Received indication for reading\n")
 					var (
-						buf       = make([]byte, 1024)
-						err       error
+						// Make an ample buffer size so that *anything* recieved
+						// from the remote server can be copied here and printed
+						buf = make([]byte, 1024)
+						// Keep track of how much we read so we know how much
+						// to clear from our buf
 						bytesRead int
 						exit      bool
 					)
 
+					// Loop and recieve data from our goroutine
+					// thats reading from the server
 					for !exit {
 						select {
+						// The goroutine will indicate us when it's done
+						// reading from the server
 						case <-*indications:
-							dlog.Printf("Recieved exit indicationn")
+							dlog.Printf("Recieved exit indicationn\n")
 							exit = true
+
+						// Otherwise, read the data from the goroutine
 						default:
-							for bytesRead, err = reader.Read(buf); err == nil && bytesRead > 0; bytesRead, err = reader.Read(buf) {
-								fmt.Printf("%s", buf)
-								for i := range buf {
-									buf[i] = 0
-								}
+							bytesRead, _ = reader.Read(buf)
+							stdoutWriter.Write(buf)
+							// Write the data when we get it
+							// this is usally in ~512 byte increments.
+							stdoutWriter.Flush()
+
+							// Clear what we used from the buffer
+							for i := 0; i < bytesRead; i++ {
+								buf[i] = 0
 							}
 						}
 					}

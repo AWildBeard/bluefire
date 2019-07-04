@@ -156,13 +156,18 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		go func(connection *Connection) {
 			for true {
 				select {
+				// If context.Cancel() is called, this will shutdown
+				// this goroutine so we aren't wasteful :D
 				case <-shutdown:
 					connection.writePipe.Close()
 					return
+				// Otherwise, handle remote indications and perform the read
+				// operation that they are indicating
 				case <-connection.remoteIndication:
 					dlog.Printf("Recieved remote indication\n")
-					connection.readIndication <- true
 					dlog.Printf("Triggering 'starting' local indication\n")
+					connection.readIndication <- true
+					dlog.Printf("Triggered 'starting' local indication\n")
 					var (
 						bytes []byte
 						err   error
@@ -180,6 +185,10 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 					connection.readIndication <- true
 					dlog.Printf("Triggered 'finished' local indication")
 
+					// Write a zero length payload to prevent the reader from hanging
+					// since we can't send io.EOF without closing the pipe, and
+					// whats the point in closing the pipe if we just have to create
+					// a new one for the next command?
 					connection.writePipe.Write([]byte{})
 
 					if err != nil {
@@ -193,7 +202,7 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		}(&newConnection)
 
 		// Only then return a valid conneciton
-		return newConnection, nil
+		return newConnection, nil // This is our only valid return
 	}
 
 	err = fmt.Errorf("write and/or read characteristics not found")
@@ -201,7 +210,7 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 fail:
 	// Be sure to close the BLE connection on a bad exit
 	newConnection.bleClient.CancelConnection()
-	return Connection{}, err
+	return Connection{}, err // This is a bad return
 }
 
 func (cntn Connection) WriteCommand(cmd string) error {
