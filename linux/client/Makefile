@@ -28,7 +28,7 @@ release:
 	$(eval LDFLAGS=-w -s)
 
 deploy:
-	scp ${OUT} pi-2:
+	scp ${OUT} pi-2:unstable
 
 clean:
 	rm -rf ${OUT}

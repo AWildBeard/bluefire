@@ -1,9 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
-	"io"
+	"os"
 	"sync"
 
 	"github.ibm.com/mmitchell/ble/linux"
@@ -49,11 +50,9 @@ type Connection struct {
 	bleClient        ble.Client
 	context          context.Context
 	write            *ble.Characteristic
-	writePipe        *io.PipeWriter
 	read             *ble.Characteristic
-	readPipe         *io.PipeReader
-	readIndication   chan bool
-	remoteIndication chan bool
+	exitIndication   chan bool // This is a blocking signal
+	remoteIndication chan bool // This is a signal triggered by receiving a indication
 }
 
 // NewConnection returns a new initialized connection that can be used immediately
@@ -67,7 +66,6 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		remoteMTU     int
 		profile       *ble.Profile
 		newConnection = Connection{}
-		shutdown      = make(chan bool, 1)
 		newCncl       func()
 	)
 
@@ -82,7 +80,6 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 
 	// Must declare after a new connection has been created
 	newCncl = func() {
-		shutdown <- true
 		newConnection.bleClient.ClearSubscriptions()
 		newConnection.bleClient.CancelConnection()
 		dlog.Println("BLE Connection Cancelled")
@@ -132,16 +129,12 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		cntx = context.WithValue(cntx, "cancel", context.CancelFunc(newCncl))
 		newConnection.context = cntx
 
-		// Bootstrap the indications and goroutine responsible from reading from
-		// these now-verified attrs
-		newConnection.readIndication = make(chan bool, 2)
+		// Create the indications that will deal with remote indications from the server.
 		newConnection.remoteIndication = make(chan bool, 1)
-		var (
-			subscriptionHandler = func(rsp []byte) {
-				dlog.Printf("Recieved indication from server: %v\n", rsp)
-				newConnection.remoteIndication <- true
-			}
-		)
+		var subscriptionHandler = func(rsp []byte) {
+			dlog.Printf("Recieved indication from server: %v\n", rsp)
+			newConnection.remoteIndication <- true
+		}
 
 		dlog.Printf("Subscribing to %v\n", readUUID)
 		if err = newConnection.bleClient.Subscribe(newConnection.read, true, subscriptionHandler); err != nil {
@@ -149,57 +142,6 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 			goto fail
 		}
 		dlog.Printf("Subscribed to %v\n", readUUID)
-
-		dlog.Printf("Starting persistent reader thread")
-		newConnection.readPipe, newConnection.writePipe = io.Pipe()
-
-		go func(connection *Connection) {
-			for true {
-				select {
-				// If context.Cancel() is called, this will shutdown
-				// this goroutine so we aren't wasteful :D
-				case <-shutdown:
-					connection.writePipe.Close()
-					return
-				// Otherwise, handle remote indications and perform the read
-				// operation that they are indicating
-				case <-connection.remoteIndication:
-					dlog.Printf("Recieved remote indication\n")
-					dlog.Printf("Triggering 'starting' local indication\n")
-					connection.readIndication <- true
-					dlog.Printf("Triggered 'starting' local indication\n")
-					var (
-						bytes []byte
-						err   error
-					)
-
-					dlog.Printf("Reading from the read characteristic: ")
-					// While the remote has data for us to read, read and store that data to return later.
-					for bytes, err = connection.bleClient.ReadCharacteristic(connection.read); err == nil && len(bytes) > 0; bytes, err = connection.bleClient.ReadCharacteristic(connection.read) {
-						dlog.Printf("Writing %v bytes to pipe\n", len(bytes))
-						connection.writePipe.Write(bytes)
-						dlog.Printf("Wrote %v bytes to pipe\n", len(bytes))
-					}
-
-					dlog.Printf("Triggering 'finished' local indication\n")
-					connection.readIndication <- true
-					dlog.Printf("Triggered 'finished' local indication")
-
-					// Write a zero length payload to prevent the reader from hanging
-					// since we can't send io.EOF without closing the pipe, and
-					// whats the point in closing the pipe if we just have to create
-					// a new one for the next command?
-					connection.writePipe.Write([]byte{})
-
-					if err != nil {
-						ErrChain <- Error{
-							err,
-							"iopipe",
-						}
-					}
-				}
-			}
-		}(&newConnection)
 
 		// Only then return a valid conneciton
 		return newConnection, nil // This is our only valid return
@@ -211,6 +153,83 @@ fail:
 	// Be sure to close the BLE connection on a bad exit
 	newConnection.bleClient.CancelConnection()
 	return Connection{}, err // This is a bad return
+}
+
+// Interact is called to start two threads that will take control
+// of stdin and stdout. They will tell the client when to return to normal
+// operation by using the returned channel
+func (cntn Connection) Interact() chan bool {
+	var exitIndicate = make(chan bool)
+	var internalExitIndicate = make(chan bool)
+
+	// Handling reading
+	go func() {
+		var stdoutWriter = bufio.NewWriter(os.Stdout)
+		for true {
+			select {
+			case <-internalExitIndicate:
+				return
+			// Otherwise, handle remote indications and perform the read
+			// operation that they are indicating
+			case <-cntn.remoteIndication:
+				dlog.Printf("Recieved remote indication\n")
+				var (
+					bytes []byte
+					err   error
+				)
+
+				dlog.Printf("Reading from the read characteristic: ")
+				// While the remote has data for us to read, read and store that data to return later.
+				for bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read); err == nil && len(bytes) > 0; bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read) {
+					dlog.Printf("Writing %v bytes to stdout\n", len(bytes))
+					stdoutWriter.Write(bytes)
+					stdoutWriter.Flush()
+					dlog.Printf("Wrote %v bytes to stdout\n", len(bytes))
+				}
+
+				if err != nil {
+					ErrChain <- Error{
+						err,
+						"read_handler",
+					}
+				}
+			}
+		}
+
+	}()
+
+	// Handling writing
+	go func() {
+		var (
+			stdinReader = bufio.NewReader(os.Stdin)
+			input       string
+		)
+
+		for input != "exit" {
+			input, _ = stdinReader.ReadString('\n')
+			switch input {
+			case fmt.Sprintf("exit\n"):
+				// Tell the caller that we done
+				exitIndicate <- true
+
+				// Tell our compatriot thread that we done
+				internalExitIndicate <- true
+				return
+			default:
+				// Send the typed command to the remote and get the response reader
+				if err := cntn.WriteCommand(input); err != nil {
+					// Await the reader routine to tell us that it's recieved the indication
+					// from the server that there is content to be read
+					ErrChain <- Error{
+						err,
+						"write_handler",
+					}
+				}
+			}
+		}
+	}()
+
+	return exitIndicate
 }
 
 func (cntn Connection) WriteCommand(cmd string) error {

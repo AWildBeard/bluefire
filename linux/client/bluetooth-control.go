@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"time"
 
@@ -282,32 +281,6 @@ func (cntrl *Controller) Connect(id string) error {
 	}
 
 	return err
-}
-
-// SendCommand allows a caller to cause a specific client to send a specific
-// command. The function uses the user-friendly identifier to determine
-// which client to send the command on.
-func (cntrl *Controller) SendCommand(id, cmd string) (*io.PipeReader, *chan bool, error) {
-	var (
-		actionID     = fmt.Sprintf("conn-%s", id)
-		reader       *io.PipeReader
-		indicateChan *chan bool
-		err          = fmt.Errorf("connection id %v not found", id)
-	)
-
-	// Make sure the client is in fact connected before we attempt to send
-	// the command
-	if cntrl.IsConnected(id) {
-		cntrl.connections.RLock()
-		var connections = cntrl.connections.Connections()
-		var connection = (*connections)[actionID]
-		reader = connection.readPipe
-		indicateChan = &connection.readIndication
-		err = connection.WriteCommand(cmd)
-		cntrl.connections.RUnlock()
-	}
-
-	return reader, indicateChan, err
 }
 
 // IsConnected allows a caller to determine if a user-friendly ID is tied to an

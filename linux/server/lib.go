@@ -1,61 +1,6 @@
 package main
 
-import (
-	"bufio"
-	"bytes"
-	"fmt"
-	"io"
-	"os/exec"
-	"strings"
-
-	"github.ibm.com/mmitchell/ble"
-)
-
-//generate structs for stdin and sttdout
-type Stdout struct {
-	Data *bytes.Buffer
-	c    chan struct{}
-	//Position int
-}
-type Stdin struct {
-	Data   *bytes.Buffer
-	stdout *Stdout
-}
-
-//client write -> server
-func (srv *Stdin) ServeWrite(req ble.Request, rsp ble.ResponseWriter) {
-	var command = string(req.Data())
-	fmt.Printf("Running command %s\n", command)
-	go runCommandAsync(command, srv.stdout.Data, srv.stdout.c)
-}
-
-//server write -> client
-func (srv *Stdout) ServeRead(req ble.Request, rsp ble.ResponseWriter) {
-	fmt.Printf("Got a read from %v\n", req.Conn().RemoteAddr())
-	//fmt.Printf("Writing %s\n", srv.Data.Bytes())
-	//only write rsp.Cap() of data at a time, client just calls several times
-	if _, err := rsp.Write(srv.Data.Next(rsp.Cap())); err != nil {
-		fmt.Printf("Failed to write data to client: %v\n", err)
-	}
-
-}
-
-//notify client on finished shell command
-func (srv *Stdout) ServeNotify(req ble.Request, n ble.Notifier) {
-	fmt.Printf("Notification Subscribed\n")
-	data := []byte("done")
-	for {
-		select {
-		case <-n.Context().Done():
-			return
-		case <-srv.c:
-			if _, err := n.Write(data); err != nil {
-				fmt.Printf("Error during notify: %v\n", err)
-			}
-		}
-	}
-}
-
+/*
 //run the command
 func runCommand(command string, stdoutData *bytes.Buffer) {
 	stdoutData.Reset()
@@ -77,24 +22,63 @@ func runCommand(command string, stdoutData *bytes.Buffer) {
 	cmd.Wait()
 	//stdout.ServeIndicate()
 }
+*/
 
-func runCommandAsync(command string, stdoutData *bytes.Buffer, c chan struct{}) {
-	stdoutData.Reset()
-	var cmdName = strings.Split(command, " ")
-	var cmd *exec.Cmd
+/*
+func runCommandAsync(command string, stdout *Stdout, c chan struct{}) {
+	stdout.data.Lock()
+
+	var (
+		data    = stdout.data.Data()
+		cmdName = strings.Split(command, " ")
+		cmd     *exec.Cmd
+	)
+
+	data.Reset()
+
 	if len(cmdName) > 1 {
 		cmd = exec.Command(cmdName[0], cmdName[1:]...)
 	} else {
 		cmd = exec.Command(cmdName[0])
 	}
-	stdout, _ := cmd.StdoutPipe()
-	r := bufio.NewReader(stdout)
+
+	var (
+		stdoutPipe, _ = cmd.StdoutPipe()
+		stdoutReader  = bufio.NewReaderSize(stdoutPipe, 1024)
+		finishSignal  = make(chan bool, 1)
+	)
+
 	cmd.Start()
-	goUpdate(r, stdoutData, cmd.ProcessState.ExitCode, c)
+	go func() {
+		if _, err := stdoutReader.Peek(1); err == nil {
+			stdout.c <- struct{}{}
+		} else {
+			return
+		}
+
+		var buf = make([]byte, 512)
+
+		for {
+			select {
+			case <-finishSignal:
+				return
+			default:
+				if _, err := stdoutReader.Read(buf); err == nil {
+					data.Write(buf)
+				}
+			}
+		}
+	}()
+
 	cmd.Wait()
+	finishSignal <- true
+
+	// Signal our reader routine that we are done :D
+	stdout.data.Unlock()
 }
 
-func goUpdate(r *bufio.Reader, stDoutData *bytes.Buffer, getExit func() int, c chan struct{}) {
+/*
+func goUpdate(stdoutReader *bufio.Reader, stDoutData *bytes.Buffer, getExit func() int, c chan struct{}) {
 	var firstData bool = false
 	for {
 		data, _, err := r.ReadLine()
@@ -112,3 +96,4 @@ func goUpdate(r *bufio.Reader, stDoutData *bytes.Buffer, getExit func() int, c c
 		}
 	}
 }
+*/

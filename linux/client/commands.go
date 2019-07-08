@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"strings"
 )
 
 func helpCmd(cmds []string) {
@@ -66,8 +65,8 @@ func connectCmd(controller *Controller, cmds []string) {
 
 func shellCmd(controller *Controller, stdinReader *bufio.Reader, stdoutWriter *bufio.Writer, cmds []string) {
 	var (
-		shellID = cmds[1]
-		input   string
+		shellID  = cmds[1]
+		actionID = fmt.Sprintf("conn-%s", shellID)
 	)
 
 	if len(cmds) < 2 {
@@ -85,64 +84,13 @@ func shellCmd(controller *Controller, stdinReader *bufio.Reader, stdoutWriter *b
 		return
 	}
 
+	controller.connections.RLock()
+	// Wait for meeee!
+	<-(*controller.connections.Connections())[actionID].Interact()
+	controller.connections.RUnlock()
+
 	// Wait until the user types exit before exiting the remote shell
-	for input != "exit" {
-		remoteShellPrompt(shellID)
-		input, _ = stdinReader.ReadString('\n')
-		input = strings.TrimRight(input, "\r\n")
-		switch input {
-		case "exit":
-			break
-		default:
-			// Send the typed command to the remote and get the response reader
-			if reader, indications, err := controller.SendCommand(shellID, input); err == nil {
-				dlog.Printf("Awaiting local indication\n")
-				// Await the reader routine to tell us that it's recieved the indication
-				// from the server that there is content to be read
-				if <-*indications {
-					dlog.Printf("Received indication for reading\n")
-					var (
-						// Make an ample buffer size so that *anything* recieved
-						// from the remote server can be copied here and printed
-						buf = make([]byte, 1024)
-						// Keep track of how much we read so we know how much
-						// to clear from our buf
-						bytesRead int
-						exit      bool
-					)
-
-					// Loop and recieve data from our goroutine
-					// thats reading from the server
-					for !exit {
-						select {
-						// The goroutine will indicate us when it's done
-						// reading from the server
-						case <-*indications:
-							dlog.Printf("Recieved exit indicationn\n")
-							exit = true
-
-						// Otherwise, read the data from the goroutine
-						default:
-							bytesRead, _ = reader.Read(buf)
-							stdoutWriter.Write(buf)
-							// Write the data when we get it
-							// this is usally in ~512 byte increments.
-							stdoutWriter.Flush()
-
-							// Clear what we used from the buffer
-							for i := 0; i < bytesRead; i++ {
-								buf[i] = 0
-							}
-						}
-					}
-				}
-			} else {
-				printer.Printf("%v\n", err)
-			}
-		}
-	}
-
-	printer.Printf("Exiting shell %s\n", shellID)
+	dlog.Printf("Exiting shell %v\n", shellID)
 }
 
 func infoCmd(controller *Controller, cmds []string) {

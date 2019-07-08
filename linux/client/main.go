@@ -7,9 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"os/signal"
 	"strings"
-	"time"
 
 	"github.ibm.com/mmitchell/bluefire/linux/client/bit"
 	"golang.org/x/text/language"
@@ -61,42 +59,11 @@ func main() {
 	dlog.Println("Creating bluetooth controller")
 	var (
 		controller   = NewController()
-		interupts    = make(chan os.Signal, 1)
 		stdinReader  = bufio.NewReader(os.Stdin)
 		stdoutWriter = bufio.NewWriter(os.Stdout)
 		cmdRunning   = bit.NewBit()
-		currentShell = ""
 		inShell      = bit.NewBit()
 	)
-
-	dlog.Println("Starting interupt handler")
-	signal.Notify(interupts, os.Interrupt)
-	go func() {
-		dlog.Println("Interupt handler started")
-		var lastTime time.Time
-
-		for range interupts {
-			if inShell.IsSet() {
-				controller.SendCommand(currentShell, string(0x03))
-				fmt.Println()
-				return
-			}
-
-			var newTime = time.Now()
-			if newTime.Sub(lastTime) <= 2*time.Second {
-				printer.Println("\nExiting.")
-				os.Exit(1)
-			} else {
-				lastTime = newTime
-			}
-
-			printer.Printf("\nUse the 'exit' command to exit or use Cntrl-C twice within 2 seconds\n")
-
-			if !cmdRunning.IsSet() {
-				prompt()
-			}
-		}
-	}()
 
 	dlog.Println("Starting Bluetooth Control Loop.")
 
@@ -135,9 +102,9 @@ func main() {
 		case "purge-targets":
 			controller.DropTargets()
 		case "connect":
-			connectCmd(controller, cmds)
+			fallthrough
 		case "shell":
-			currentShell = cmds[1]
+			connectCmd(controller, cmds)
 			inShell.Set()
 			shellCmd(controller, stdinReader, stdoutWriter, cmds)
 			inShell.Unset()
