@@ -23,16 +23,31 @@ type ShellServer struct {
 	subscribed       bool
 	clientIndicate   chan bool
 	dataIndicate     chan bool
+	resumeDataChecks chan bool
 }
 
 // NewShellServer creates a new ShellServer
 func NewShellServer() *ShellServer {
-	return &ShellServer{
-		clientIndicate: make(chan bool, 1),
-		dataIndicate:   make(chan bool),
-		outRdrLock:     sync.Mutex{},
-		inWtrLock:      sync.Mutex{},
+	var newServer = &ShellServer{
+		clientIndicate:   make(chan bool, 1),
+		dataIndicate:     make(chan bool),
+		resumeDataChecks: make(chan bool, 1),
+		outRdrLock:       sync.Mutex{},
+		inWtrLock:        sync.Mutex{},
 	}
+
+	newServer.shell = exec.Command("bash")
+	var outputPipe, _ = newServer.shell.StdoutPipe()
+	var inputPipe, _ = newServer.shell.StdinPipe()
+	newServer.outputReader = bufio.NewReader(outputPipe)
+	newServer.inputWriter = bufio.NewWriter(inputPipe)
+
+	if err := newServer.shell.Start(); err != nil {
+		ilog.Fatalf("Failed to start shell: %v\n", err)
+		os.Exit(1)
+	}
+
+	return newServer
 }
 
 // ServeWrite allows the ShellServer to take in commands to execute
@@ -67,15 +82,23 @@ func (srv *ShellServer) ServeRead(req ble.Request, rsp ble.ResponseWriter) {
 
 	// TODO: Copy goroutine instead?
 	var (
-		bytesBuffered = srv.outputReader.Buffered()
-		rspCap        = rsp.Cap()
-		buf           []byte
-		err           error
-		locked        bool
+		buf []byte
+		err error
 	)
 
 	select {
 	case <-srv.dataIndicate:
+		srv.outRdrLock.Lock()
+		// This will tell the thread that buffers data for us to
+		// continue. By having the thread wait for this indication,
+		// we are guarenteed the outRdrLock
+		srv.resumeDataChecks <- true
+
+		var (
+			bytesBuffered = srv.outputReader.Buffered()
+			rspCap        = rsp.Cap()
+		)
+
 		if bytesBuffered == 0 {
 			// Why did we recieve a dataIndicate then? Eh, better safe than sorry.
 			// Otherwise we block on the other cases below and dats bad.
@@ -83,18 +106,15 @@ func (srv *ShellServer) ServeRead(req ble.Request, rsp ble.ResponseWriter) {
 			buf = []byte{}
 		} else if bytesBuffered < rspCap {
 			dlog.Printf("Reading %v data into buffer\n", bytesBuffered)
-			srv.outRdrLock.Lock()
-			locked = true
 			buf, err = srv.outputReader.Peek(bytesBuffered)
 			srv.outputReader.Discard(len(buf))
 		} else {
 			dlog.Printf("Reading %v data into buffer\n", rspCap)
-			srv.outRdrLock.Lock()
-			locked = true
 			buf, err = srv.outputReader.Peek(rspCap)
 			srv.outputReader.Discard(len(buf))
 		}
 
+		srv.outRdrLock.Unlock()
 	default:
 		dlog.Printf("No data ready according to dataIndicate. Responding with zero len")
 		buf = []byte{}
@@ -111,10 +131,6 @@ func (srv *ShellServer) ServeRead(req ble.Request, rsp ble.ResponseWriter) {
 	dlog.Printf("Responded to client\n")
 
 	srv.lastTimeRead = time.Now()
-
-	if locked {
-		srv.outRdrLock.Unlock()
-	}
 }
 
 // ServeNotify allows the server to indicate to the client when there
@@ -126,91 +142,85 @@ func (srv *ShellServer) ServeNotify(req ble.Request, n ble.Notifier) {
 	if srv.subscribed {
 		dlog.Printf("we already have a subscription, ignoring!\n")
 		n.Close()
-	} else {
-		srv.shell = exec.Command("bash")
-		var outputPipe, _ = srv.shell.StdoutPipe()
-		var inputPipe, _ = srv.shell.StdinPipe()
-		srv.outputReader = bufio.NewReader(outputPipe)
-		srv.inputWriter = bufio.NewWriter(inputPipe)
-		srv.subscribed = true
+		return
+	}
 
-		if err := srv.shell.Start(); err != nil {
-			ilog.Fatalf("Failed to start shell: %v\n", err)
-			os.Exit(1)
-		}
+	srv.subscribed = true
 
-		// This small goroutine listens for activity on the stdout pipe and
-		// will cause an indication to the subscribed client. This tells the client
-		// that there is content to read :D
-		go func(srv *ShellServer) {
-			var kill = make(chan bool)
-			for {
-				select {
-				case <-exitChan:
-					kill <- true
-					return
-				default:
-					srv.outRdrLock.Lock()
-					// Calling peek is kindof shitty, but we neeed the underlying reader
-					// To buffer data and thats how we trigger it. Through testing, it buffers
-					// all of the data that needs to be read. Subsequent peeks in ServeRead
-					// cause even more buffering which is what we want.
-					if _, err := srv.outputReader.Peek(1); err == nil {
-						srv.outRdrLock.Unlock()
-						dlog.Printf("Found data to read!")
-						// Only indicate if it's been a while since the client
-						// has read from us
-						var (
-							localExitChan = make(chan bool, 1)
-						)
+	// This small goroutine listens for activity on the stdout pipe and
+	// will cause an indication to the subscribed client. This tells the client
+	// that there is content to read :D
+	go func(srv *ShellServer) {
+		var kill = make(chan bool)
+		for {
+			select {
+			case <-exitChan:
+				kill <- true
+				return
+			default:
+				srv.outRdrLock.Lock()
+				// Calling peek is kindof shitty, but we neeed the underlying reader
+				// To buffer data and thats how we trigger it. Through testing, it buffers
+				// all of the data that needs to be read. Subsequent peeks in ServeRead
+				// cause even more buffering which is what we want.
+				if _, err := srv.outputReader.Peek(1); err == nil {
+					srv.outRdrLock.Unlock()
+					dlog.Printf("Found data to read!")
+					// Only indicate if it's been a while since the client
+					// has read from us
+					var (
+						localExitChan = make(chan bool, 1)
+					)
 
-						// This thread only exists to send multiple notifies,
-						// in the case that the client doesn't recieve the first for whatever reason.
-						// This will continue to indicate the client until they read from the read
-						// attribute.
-						go func() {
-							var currentTime time.Time
+					// This thread only exists to send multiple notifies,
+					// in the case that the client doesn't recieve the first for whatever reason.
+					// This will continue to indicate the client until they read from the read
+					// attribute.
+					go func() {
+						var currentTime time.Time
 
-							for {
-								currentTime = time.Now()
-								select {
-								case <-localExitChan:
-									return
-								case <-kill:
-									return
-								default:
-									var (
-										sinceLastRead   = currentTime.Sub(srv.lastTimeRead)
-										sinceLastNotify = currentTime.Sub(srv.lastTimeNotified)
-									)
+						for {
+							currentTime = time.Now()
+							select {
+							case <-localExitChan:
+								return
+							case <-kill:
+								return
+							default:
+								var (
+									sinceLastRead   = currentTime.Sub(srv.lastTimeRead)
+									sinceLastNotify = currentTime.Sub(srv.lastTimeNotified)
+								)
 
-									if sinceLastRead > 500*time.Millisecond && sinceLastNotify > 500*time.Millisecond {
-										dlog.Printf("Found data that has not been read yet!")
-										srv.notifyClient()
-									} else if sinceLastRead < sinceLastNotify {
-										// The sinceLastRead counter has to go the farthest to get to 2 seconds
-										time.Sleep((500 * time.Millisecond) - sinceLastRead)
-									} else {
-										// The sinceLastNotify counter has to go the farthest to get to 2 seconds
-										time.Sleep((500 * time.Millisecond) - sinceLastNotify)
-									}
+								if sinceLastRead > 500*time.Millisecond && sinceLastNotify > 500*time.Millisecond {
+									dlog.Printf("Found data that has not been read yet!")
+									srv.notifyClient()
+								} else if sinceLastRead < sinceLastNotify {
+									// The sinceLastRead counter has to go the farthest to get to 2 seconds
+									time.Sleep((500 * time.Millisecond) - sinceLastRead)
+								} else {
+									// The sinceLastNotify counter has to go the farthest to get to 2 seconds
+									time.Sleep((500 * time.Millisecond) - sinceLastNotify)
 								}
 							}
-						}()
+						}
+					}()
 
-						// This will block. We do this so that the thread above can indicate
-						// the client until it reads. When it reads, this will unblock
-						srv.dataIndicate <- true
+					// This will block. We do this so that the thread above can indicate
+					// the client until it reads. When it reads, this will unblock
+					srv.dataIndicate <- true
 
-						// This will not block. Just to signal the thread above to exit
-						localExitChan <- true
-					} else {
-						dlog.Printf("Caught error while peeking for data: %v\n", err)
-					}
+					// This will not block. Just to signal the thread above to exit
+					localExitChan <- true
+
+					// Wait for the main reader thread to acquire it's lock just in case.
+					<-srv.resumeDataChecks
+				} else {
+					dlog.Printf("Caught error while peeking for data: %v\n", err)
 				}
 			}
-		}(srv)
-	}
+		}
+	}(srv)
 
 	var data = []byte{}
 
@@ -219,7 +229,6 @@ func (srv *ShellServer) ServeNotify(req ble.Request, n ble.Notifier) {
 		// The client unsubscribed
 		case <-n.Context().Done():
 			dlog.Println("Client unsubscribed")
-			srv.shell.Process.Kill()
 			srv.subscribed = false
 			exitChan <- true
 			return
