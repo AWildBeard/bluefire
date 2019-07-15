@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"sync"
 
 	"github.ibm.com/mmitchell/ble/linux"
@@ -162,6 +163,12 @@ func (cntn Connection) Interact() chan bool {
 	var exitIndicate = make(chan bool)
 	var internalExitIndicate = make(chan bool)
 
+	// Disable input buffering
+	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
+
+	// Disable character echoing (remote will handle it for us)
+	exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+
 	// Handling reading
 	go func() {
 		var stdoutWriter = bufio.NewWriter(os.Stdout)
@@ -181,6 +188,10 @@ func (cntn Connection) Interact() chan bool {
 				dlog.Printf("Reading from the read characteristic: ")
 				// While the remote has data for us to read, read and store that data to return later.
 				for bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read); err == nil && len(bytes) > 0; bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read) {
+					if len(bytes) == 1 && bytes[0] == 0 {
+						break
+					}
+
 					dlog.Printf("Writing %v bytes to stdout\n", len(bytes))
 					stdoutWriter.Write(bytes)
 					stdoutWriter.Flush()
@@ -202,22 +213,28 @@ func (cntn Connection) Interact() chan bool {
 	go func() {
 		var (
 			stdinReader = bufio.NewReader(os.Stdin)
-			input       string
+			input       rune
 		)
 
-		for input != "exit" {
-			input, _ = stdinReader.ReadString('\n')
+		for {
+			input, _, _ = stdinReader.ReadRune()
 			switch input {
-			case fmt.Sprintf("exit\n"):
+			case 0x02:
+				if r, _, _ := stdinReader.ReadRune(); r != 'q' {
+					continue
+				}
+
 				// Tell the caller that we done
 				exitIndicate <- true
 
 				// Tell our compatriot thread that we done
 				internalExitIndicate <- true
+
+				exec.Command("stty", "-F", "/dev/tty", "sane").Run()
 				return
 			default:
 				// Send the typed command to the remote and get the response reader
-				if err := cntn.WriteCommand(input); err != nil {
+				if err := cntn.WriteCommand(string(input)); err != nil {
 					// Await the reader routine to tell us that it's recieved the indication
 					// from the server that there is content to be read
 					ErrChain <- Error{

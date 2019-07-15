@@ -36,7 +36,7 @@ func NewShellServer() *ShellServer {
 		inWtrLock:        sync.Mutex{},
 	}
 
-	newServer.shell = exec.Command("bash")
+	newServer.shell = exec.Command("bash", "--", "python", "-c", "'import pty;pty.spawn(\"/bin/bash\")'")
 	var outputPipe, _ = newServer.shell.StdoutPipe()
 	var inputPipe, _ = newServer.shell.StdinPipe()
 	newServer.outputReader = bufio.NewReader(outputPipe)
