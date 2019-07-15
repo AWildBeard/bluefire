@@ -52,9 +52,10 @@ func main() {
 	)
 
 	if dev, err = linux.NewDeviceWithName("Bose-QC40"); err != nil {
-		ilog.Printf("Failed to attach HCI dev: %v \n", err)
+		ilog.Printf("Failed to attach HCI dev: %v\n", err)
 		return
 	}
+	dlog.Printf("Accessed HCI dev: %v\n", dev.HCI.Addr())
 
 	ble.SetDefaultDevice(dev)
 
@@ -80,6 +81,9 @@ func main() {
 	// Create the context to cancel the server see "context" docs
 	var context = ble.WithSigHandler(context.WithCancel(context.Background()))
 
+	dlog.Printf("Hosting the server and listening for connections!")
+
 	// Advertise the service and it's characteristics
 	ble.AdvertiseNameAndServices(context, "Bose-QC40", bleServer.UUID)
+	dlog.Printf("Exiting")
 }

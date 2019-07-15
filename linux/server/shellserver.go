@@ -36,7 +36,7 @@ func NewShellServer() *ShellServer {
 		inWtrLock:        sync.Mutex{},
 	}
 
-	newServer.shell = exec.Command("bash", "--", "python", "-c", "'import pty;pty.spawn(\"/bin/bash\")'")
+	newServer.shell = exec.Command("bash", "-l")
 	var outputPipe, _ = newServer.shell.StdoutPipe()
 	var inputPipe, _ = newServer.shell.StdinPipe()
 	newServer.outputReader = bufio.NewReader(outputPipe)
@@ -46,6 +46,11 @@ func NewShellServer() *ShellServer {
 		ilog.Fatalf("Failed to start shell: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Wait before bootstrapping the shell
+	time.Sleep(1 * time.Second)
+	inputPipe.Write([]byte("python -c 'import pty;pty.spawn(\"/bin/bash\")'\n"))
+	time.Sleep(1 * time.Second)
 
 	return newServer
 }
@@ -96,7 +101,7 @@ func (srv *ShellServer) ServeRead(req ble.Request, rsp ble.ResponseWriter) {
 
 		var (
 			bytesBuffered = srv.outputReader.Buffered()
-			rspCap        = rsp.Cap()
+			cap           = rsp.Cap()
 		)
 
 		if bytesBuffered == 0 {
@@ -104,14 +109,12 @@ func (srv *ShellServer) ServeRead(req ble.Request, rsp ble.ResponseWriter) {
 			// Otherwise we block on the other cases below and dats bad.
 			dlog.Printf("No bytes buffered for reading, responding with zero len")
 			buf = []byte{}
-		} else if bytesBuffered < rspCap {
-			dlog.Printf("Reading %v data into buffer\n", bytesBuffered)
-			buf, err = srv.outputReader.Peek(bytesBuffered)
-			srv.outputReader.Discard(len(buf))
+		} else if cap > bytesBuffered {
+			buf = make([]byte, bytesBuffered)
+			_, err = srv.outputReader.Read(buf)
 		} else {
-			dlog.Printf("Reading %v data into buffer\n", rspCap)
-			buf, err = srv.outputReader.Peek(rspCap)
-			srv.outputReader.Discard(len(buf))
+			buf = make([]byte, cap)
+			_, err = srv.outputReader.Read(buf)
 		}
 
 		srv.outRdrLock.Unlock()
@@ -192,15 +195,15 @@ func (srv *ShellServer) ServeNotify(req ble.Request, n ble.Notifier) {
 									sinceLastNotify = currentTime.Sub(srv.lastTimeNotified)
 								)
 
-								if sinceLastRead > 500*time.Millisecond && sinceLastNotify > 500*time.Millisecond {
+								if sinceLastRead > 250*time.Millisecond && sinceLastNotify > 250*time.Millisecond {
 									dlog.Printf("Found data that has not been read yet!")
 									srv.notifyClient()
 								} else if sinceLastRead < sinceLastNotify {
 									// The sinceLastRead counter has to go the farthest to get to 2 seconds
-									time.Sleep((500 * time.Millisecond) - sinceLastRead)
+									time.Sleep((250 * time.Millisecond) - sinceLastRead)
 								} else {
 									// The sinceLastNotify counter has to go the farthest to get to 2 seconds
-									time.Sleep((500 * time.Millisecond) - sinceLastNotify)
+									time.Sleep((250 * time.Millisecond) - sinceLastNotify)
 								}
 							}
 						}

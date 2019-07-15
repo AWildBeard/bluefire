@@ -220,8 +220,8 @@ func (cntn Connection) Interact() chan bool {
 			input, _, _ = stdinReader.ReadRune()
 			switch input {
 			case 0x02:
-				if r, _, _ := stdinReader.ReadRune(); r != 'q' {
-					continue
+				if input, _, _ = stdinReader.ReadRune(); input != 'q' {
+					goto fall
 				}
 
 				// Tell the caller that we done
@@ -232,6 +232,8 @@ func (cntn Connection) Interact() chan bool {
 
 				exec.Command("stty", "-F", "/dev/tty", "sane").Run()
 				return
+			fall:
+				fallthrough
 			default:
 				// Send the typed command to the remote and get the response reader
 				if err := cntn.WriteCommand(string(input)); err != nil {
@@ -255,7 +257,7 @@ func (cntn Connection) WriteCommand(cmd string) error {
 	)
 
 	dlog.Printf("Writing %v to the write characteristic\n", cmd)
-	if err = cntn.bleClient.WriteCharacteristic(cntn.write, []byte(cmd), false); err != nil {
+	if err = cntn.bleClient.WriteCharacteristic(cntn.write, []byte(cmd), true); err != nil {
 		dlog.Printf("Failed to write %v to the write characteristic\n", cmd)
 		return err
 	}
