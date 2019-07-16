@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"sync"
 
+	"github.ibm.com/mmitchell/ble/linux/hci/cmd"
+
 	"github.ibm.com/mmitchell/ble/linux"
 
 	"github.ibm.com/mmitchell/ble"
@@ -68,6 +70,8 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		profile       *ble.Profile
 		newConnection = Connection{}
 		newCncl       func()
+		dleReq        cmd.SetDataLengthCommand
+		dleRsp        cmd.SetDataLengthCommandRP
 	)
 
 	// Initiate the connection
@@ -94,7 +98,21 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		dlog.Printf("The remote mtu is %v\n", remoteMTU-3)
 	}
 
-	// TODO: Enable DLE
+	// Enable DLE
+	dleReq = cmd.SetDataLengthCommand{
+		ConnectionHandle: newConnection.bleClient.Conn().Handle(),
+		TxOctets:         0xF8,
+		TxTime:           0x4E2,
+	}
+	dleRsp = cmd.SetDataLengthCommandRP{}
+
+	if err = dev.HCI.Send(&dleReq, &dleRsp); err != nil {
+		dlog.Printf("failed to enable DLE: %v\n", err)
+		dlog.Printf("HCI Response code: %v\n", dleRsp.Status)
+		err = nil // This is a non-fatal error. Continue on.
+	} else {
+		dlog.Printf("Enabled DLE for L2CAP\n")
+	}
 
 	// Discover the remote profile
 	if profile, err = newConnection.bleClient.DiscoverProfile(true); err == nil {
