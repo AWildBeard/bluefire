@@ -4,11 +4,12 @@ var (
 	commandDescriptions = map[string]string{
 		"targets":       "targets list the targets that have been discovered by scan.",
 		"ps":            "ps lists the running actions. Actions can be killed using the\nkill command.",
-		"info":          "info returns the advertisement info for a ble device. info takes\na #number from the target command as an argument.",
+		"info":          "info returns the advertisement info for a ble device. info takes\na #number from the targets command as an argument.",
 		"kill":          "kill stops a background action. It expects an argument from the\noutput of ps to run",
 		"scan":          "scan starts the scan action in the background. This populates\nthe targets command.",
 		"purge-targets": "purge-targets removes all targets from the targets command.",
 		"clear":         "clear clears the terminal screen.",
+		"shell":         "shell drops the user into a local shell on the specified target.\nshell takes a #number from the targets command as an argument.",
 		"exit":          "exit exits BlueFire.",
 		"help":          "help prints the default help page. It can also take the name of\na command as an argument to return more information about that command.",
 	}

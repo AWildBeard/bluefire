@@ -77,6 +77,8 @@ func shellCmd(controller *Controller, stdinReader *bufio.Reader, stdoutWriter *b
 		return fmt.Errorf("Please connect to %s first using the 'connect' command", shellID)
 	}
 
+	printer.Println("Entering shell. Press 'Ctrl-b' then 'q' to return to BlueFire!")
+
 	controller.connections.RLock()
 	// Wait for meeee!
 	<-(*controller.connections.Connections())[actionID].Interact()
