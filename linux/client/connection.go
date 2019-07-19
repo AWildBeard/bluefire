@@ -192,20 +192,29 @@ func (cntn Connection) Interact() chan bool {
 	var (
 		exitIndicate         = make(chan bool) // Signals the caller the threads exited
 		internalExitIndicate = make(chan bool) // Signals the read thread to exit
+		savedSttyState       string
 	)
-
-	// TODO: Add an interupt handler that will catch Ctrl-C
-	// and other interupts that we don't get to parse from our
-	// stdin reading thread :(
-
 	// TODO: Investigate using a PTY library to control this stuff
-	// instead of using stty as a dependency
+	// instead of this stty madness
 
+	// Save the TTY state
+	if output, err := exec.Command("stty", "-F", "/dev/tty", "-g").Output(); err == nil {
+		savedSttyState = string(output)
+
+	} else {
+		dlog.Printf("Failed to save stty state: %v\n", err)
+		savedSttyState = "sane"
+	}
+
+	// Bootstrap the TTY to do the cool stuff
 	// Disable input buffering
 	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
-
 	// Disable character echoing (remote will handle it for us)
 	exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+	// Get rid of Ctrl-C interupts. Let remote handle it.
+	exec.Command("stty", "-F", "/dev/tty", "intr", "undef").Run()
+	// Get rid of Ctrl-Z interupts. Let remote handle it.
+	exec.Command("stty", "-F", "/dev/tty", "susp", "undef").Run()
 
 	// Handling reading
 	go func() {
@@ -275,6 +284,7 @@ func (cntn Connection) Interact() chan bool {
 
 				// Revert to a sane terminal environment using stty
 				exec.Command("stty", "-F", "/dev/tty", "sane").Run()
+				exec.Command("stty", "-F", "/dev/tty", savedSttyState).Run()
 				return
 			fall:
 				fallthrough
