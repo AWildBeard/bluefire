@@ -20,22 +20,28 @@ func NewActions() Actions {
 	}
 }
 
+// RLock is an override for Actions mutex
 func (action *Actions) RLock() {
 	action.lock.RLock()
 }
 
+// RUnlock is an override for Actions mutex
 func (action *Actions) RUnlock() {
 	action.lock.RUnlock()
 }
 
+// Lock is an override for Actions mutex
 func (action *Actions) Lock() {
 	action.lock.Lock()
 }
 
+// Unlock is an override for Actions mutex
 func (action *Actions) Unlock() {
 	action.lock.Unlock()
 }
 
+// Actions returns a pointer to the internal data structure
+// used by actions for action management
 func (action *Actions) Actions() *map[string]context.Context {
 	return &action.actions
 }

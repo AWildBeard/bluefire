@@ -11,6 +11,10 @@ import (
 )
 
 var (
+	// ErrChain is a global error chain that can be written to by any
+	// goroutine at any time. This is here so that showing the user errors
+	// and making decisions about the validity of errors
+	// can be done in a controlled way.
 	ErrChain chan Error
 )
 
@@ -249,7 +253,7 @@ func (cntrl *Controller) Connect(id string) error {
 
 	// Make sure the Controller isn't already connected to the device
 	if cntrl.IsConnected(id) {
-		return fmt.Errorf("already connected to %s", id)
+		return nil // Already connected, no sense in causing an error
 	}
 
 	// Get the target's full ble advertisement, and use it's addr to attempt a connection

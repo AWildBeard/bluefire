@@ -1,7 +1,7 @@
 package main
 
 var (
-	commandInfo = map[string]string{
+	commandDescriptions = map[string]string{
 		"targets":       "targets list the targets that have been discovered by scan.",
 		"ps":            "ps lists the running actions. Actions can be killed using the\nkill command.",
 		"info":          "info returns the advertisement info for a ble device. info takes\na #number from the target command as an argument.",
@@ -14,25 +14,24 @@ var (
 	}
 )
 
-func ValidCommands() []string {
+func validCommands() []string {
 	return []string{"\033[1mtargets\033[m",
 		"\033[1mps\033[m",
 		"\033[1minfo \033[0;4mtarget\033[0m"}
 }
 
-func ValidActions() []string {
+func validActions() []string {
 	return []string{"\033[1mkill \033[0;4maction\033[0m",
 		"\033[1mscan\033[m", "\033[1mpurge-targets\033[m",
-		"\033[1mconnect\033[m \033[4mtarget\033[m",
 		"\033[1mshell\033[m \033[4mtarget\033[m"}
 }
 
-func ValidUtilities() []string {
+func validUtilities() []string {
 	return []string{"\033[1mclear\033[m",
 		"\033[1mexit\033[m",
 		"\033[1mhelp\033[m [\033[4mcommand\033[m]"}
 }
 
-func CommandInfo(cmd string) string {
-	return commandInfo[cmd]
+func commandInfo(cmd string) string {
+	return commandDescriptions[cmd]
 }

@@ -96,7 +96,12 @@ func main() {
 				printer.Println("'kill' expects an action as a second argument")
 				continue
 			}
-			controller.CancelAction(cmds[1])
+
+			var err = controller.CancelAction(cmds[1])
+			if err != nil {
+				printer.Printf("%v\n", err)
+			}
+
 		case "targets":
 			targetsCmd(controller)
 		case "purge-targets":
@@ -104,12 +109,22 @@ func main() {
 		case "connect":
 			fallthrough
 		case "shell":
-			connectCmd(controller, cmds)
+			var err = connectCmd(controller, cmds)
+			if err != nil {
+				printer.Printf("%v\n", err)
+			}
+
 			inShell.Set()
-			shellCmd(controller, stdinReader, stdoutWriter, cmds)
+			err = shellCmd(controller, stdinReader, stdoutWriter, cmds)
+			if err != nil {
+				printer.Printf("%v\n", err)
+			}
 			inShell.Unset()
 		case "info":
-			infoCmd(controller, cmds)
+			var err = infoCmd(controller, cmds)
+			if err != nil {
+				printer.Printf("%v\n", err)
+			}
 		case "exit":
 			return
 		case "cls":
@@ -130,11 +145,6 @@ func clearScreen() {
 func prompt() {
 	fmt.Printf("\033[2K\r")
 	printer.Print("\033[38;5;21mbf\033[38;5;196m>\033[m ")
-}
-
-func remoteShellPrompt(id string) {
-	fmt.Printf("\033[2K\r")
-	printer.Printf("\033[38;5;21mbf\033[38;5;226m/\033[m%s\033[38;5;196m>\033[m ", id)
 }
 
 func fivePrint(words []string) {

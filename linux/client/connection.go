@@ -15,11 +15,15 @@ import (
 	"github.ibm.com/mmitchell/ble"
 )
 
+// Connections act as a data holder to contain a unlimited
+// amount of thread-safe connections. These are thread safe by
+// having a RWMutex that is used before accessing this internal data
 type Connections struct {
 	lock        sync.RWMutex
 	connections map[string]Connection
 }
 
+// NewConnections is a simple generator to create a Connections type
 func NewConnections() Connections {
 	return Connections{
 		sync.RWMutex{},
@@ -27,22 +31,28 @@ func NewConnections() Connections {
 	}
 }
 
+// Lock is an override for the internal mutex's lock
 func (cons *Connections) Lock() {
 	cons.lock.Lock()
 }
 
+// Unlock is an override for the internal mutex
 func (cons *Connections) Unlock() {
 	cons.lock.Unlock()
 }
 
+// RLock is an override for the internal mutex
 func (cons *Connections) RLock() {
 	cons.lock.RLock()
 }
 
+// RUnlock is an override for the internal mutex
 func (cons *Connections) RUnlock() {
 	cons.lock.RUnlock()
 }
 
+// Connections returns a pointer to the internal data structure that
+// holds Connections
 func (cons *Connections) Connections() *map[string]Connection {
 	return &cons.connections
 }
@@ -143,8 +153,9 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		}
 	}
 
-	// Make sure we found both attrs
+	// Make sure we found both the read and write attrs
 	if readSet && writeSet {
+		// Override the cancel func to clean up subscriptions
 		cntx = context.WithValue(cntx, "cancel", context.CancelFunc(newCncl))
 		newConnection.context = cntx
 
@@ -178,8 +189,17 @@ fail:
 // of stdin and stdout. They will tell the client when to return to normal
 // operation by using the returned channel
 func (cntn Connection) Interact() chan bool {
-	var exitIndicate = make(chan bool)
-	var internalExitIndicate = make(chan bool)
+	var (
+		exitIndicate         = make(chan bool) // Signals the caller the threads exited
+		internalExitIndicate = make(chan bool) // Signals the read thread to exit
+	)
+
+	// TODO: Add an interupt handler that will catch Ctrl-C
+	// and other interupts that we don't get to parse from our
+	// stdin reading thread :(
+
+	// TODO: Investigate using a PTY library to control this stuff
+	// instead of using stty as a dependency
 
 	// Disable input buffering
 	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
@@ -192,6 +212,7 @@ func (cntn Connection) Interact() chan bool {
 		var stdoutWriter = bufio.NewWriter(os.Stdout)
 		for true {
 			select {
+			// Exit has been called, quit and cleanup
 			case <-internalExitIndicate:
 				return
 			// Otherwise, handle remote indications and perform the read
@@ -237,7 +258,11 @@ func (cntn Connection) Interact() chan bool {
 		for {
 			input, _, _ = stdinReader.ReadRune()
 			switch input {
+			// Ctrl-B has been pressed. This is our prefix key. Pressing q next will exit
+			// the shell
 			case 0x02:
+				// If the prefix key was pressed, and the next key is not
+				// a valid command, pass that key through to the remote shell
 				if input, _, _ = stdinReader.ReadRune(); input != 'q' {
 					goto fall
 				}
@@ -248,6 +273,7 @@ func (cntn Connection) Interact() chan bool {
 				// Tell our compatriot thread that we done
 				internalExitIndicate <- true
 
+				// Revert to a sane terminal environment using stty
 				exec.Command("stty", "-F", "/dev/tty", "sane").Run()
 				return
 			fall:
@@ -269,6 +295,9 @@ func (cntn Connection) Interact() chan bool {
 	return exitIndicate
 }
 
+// WriteCommand takes the given string argument and writes
+// it to the remote services 'write' characteristic. This 'write'
+// characteristic is defined in the Bluetooth Connection Specification
 func (cntn Connection) WriteCommand(cmd string) error {
 	var (
 		err error

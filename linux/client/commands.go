@@ -7,16 +7,16 @@ import (
 
 func helpCmd(cmds []string) {
 	if len(cmds) > 1 {
-		printer.Printf("%v\n", CommandInfo(cmds[1]))
+		printer.Printf("%v\n", commandInfo(cmds[1]))
 	} else {
 		printer.Printf("\033[2m\033[4mCommands: commands retrieve information\033[0m\n")
-		fivePrint(ValidCommands())
+		fivePrint(validCommands())
 
 		printer.Printf("\n\033[2m\033[4mActions: actions are commands that cause changes\033[0m\n")
-		fivePrint(ValidActions())
+		fivePrint(validActions())
 
 		printer.Printf("\n\033[2m\033[4mUtilities: utilities are commands that help & control the interface\033[0m\n")
-		fivePrint(ValidUtilities())
+		fivePrint(validUtilities())
 	}
 }
 
@@ -47,41 +47,34 @@ func targetsCmd(controller *Controller) {
 	}
 }
 
-func connectCmd(controller *Controller, cmds []string) {
+func connectCmd(controller *Controller, cmds []string) error {
 	if len(cmds) < 2 {
-		printer.Println("'connect' expects a target as a parameter")
-		return
+		return fmt.Errorf("'connect' expects a target as a parameter")
 	}
 
 	if cmds[1][0] != '#' {
-		printer.Println("Please select a target by its '#number'")
-		return
+		return fmt.Errorf("Please select a target by its '#number'")
 	}
 
-	if err := controller.Connect(cmds[1]); err != nil {
-		printer.Printf("%v\n", err)
-	}
+	return controller.Connect(cmds[1])
 }
 
-func shellCmd(controller *Controller, stdinReader *bufio.Reader, stdoutWriter *bufio.Writer, cmds []string) {
+func shellCmd(controller *Controller, stdinReader *bufio.Reader, stdoutWriter *bufio.Writer, cmds []string) error {
 	var (
 		shellID  = cmds[1]
 		actionID = fmt.Sprintf("conn-%s", shellID)
 	)
 
 	if len(cmds) < 2 {
-		printer.Println("'shell' expects a target as a parameter")
-		return
+		return fmt.Errorf("'shell' expects a target as a parameter")
 	}
 
 	if cmds[1][0] != '#' {
-		printer.Println("Please select a target by its '#number'")
-		return
+		return fmt.Errorf("Please select a target by its '#number'")
 	}
 
 	if !controller.IsConnected(shellID) {
-		printer.Printf("Please connect to %s first using the 'connect' command\n", shellID)
-		return
+		return fmt.Errorf("Please connect to %s first using the 'connect' command", shellID)
 	}
 
 	controller.connections.RLock()
@@ -91,17 +84,16 @@ func shellCmd(controller *Controller, stdinReader *bufio.Reader, stdoutWriter *b
 
 	// Wait until the user types exit before exiting the remote shell
 	dlog.Printf("Exiting shell %v\n", shellID)
+	return nil
 }
 
-func infoCmd(controller *Controller, cmds []string) {
+func infoCmd(controller *Controller, cmds []string) error {
 	if len(cmds) < 2 {
-		printer.Println("'info' expects a target as a parameter")
-		return
+		return fmt.Errorf("'info' expects a target as a parameter")
 	}
 
 	if cmds[1][0] != '#' {
-		printer.Println("Please select a target by its '#number'")
-		return
+		return fmt.Errorf("Please select a target by its '#number'")
 	}
 
 	// Get the target the user wants info for
@@ -121,6 +113,8 @@ func infoCmd(controller *Controller, cmds []string) {
 			printer.Printf("\t%v is not advertising services\n", target.Addr())
 		}
 	} else {
-		printer.Printf("%v\n", err)
+		return err
 	}
+
+	return nil
 }
