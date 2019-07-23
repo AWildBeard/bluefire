@@ -60,6 +60,7 @@ func (cons *Connections) Connections() *map[string]Connection {
 // Connection holds a single BLE connection that is used to control and interact
 // with remote hosts
 type Connection struct {
+	lock             *sync.RWMutex
 	bleClient        ble.Client
 	context          context.Context
 	write            *ble.Characteristic
@@ -78,7 +79,7 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		writeSet      bool
 		remoteMTU     int
 		profile       *ble.Profile
-		newConnection = Connection{}
+		newConnection = Connection{lock: &sync.RWMutex{}}
 		newCncl       func()
 		dleReq        cmd.SetDataLengthCommand
 		dleRsp        cmd.SetDataLengthCommandRP
@@ -163,7 +164,10 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 		newConnection.remoteIndication = make(chan bool, 1)
 		var subscriptionHandler = func(rsp []byte) {
 			dlog.Printf("Recieved indication from server: %v\n", rsp)
-			newConnection.remoteIndication <- true
+			select {
+			case newConnection.remoteIndication <- true:
+			default:
+			}
 		}
 
 		dlog.Printf("Subscribing to %v\n", readUUID)
@@ -208,8 +212,6 @@ func (cntn Connection) Interact() chan bool {
 	}
 
 	// Bootstrap the TTY to do the cool stuff
-	// Disable input buffering
-	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
 	// Disable character echoing (remote will handle it for us)
 	exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
 	// Get rid of Ctrl-C interupts. Let remote handle it.
@@ -236,16 +238,16 @@ func (cntn Connection) Interact() chan bool {
 
 				dlog.Printf("Reading from the read characteristic: ")
 				// While the remote has data for us to read, read and store that data to return later.
-				for bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read); err == nil && len(bytes) > 0; bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read) {
-					if len(bytes) == 1 && bytes[0] == 0 {
-						break
-					}
-
+				cntn.lock.RLock()
+				for bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read); err == nil && len(bytes) > 0 || len(bytes) == 1 && bytes[0] == 0; bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read) {
+					cntn.lock.RUnlock()
 					dlog.Printf("Writing %v bytes to stdout\n", len(bytes))
 					stdoutWriter.Write(bytes)
 					stdoutWriter.Flush()
 					dlog.Printf("Wrote %v bytes to stdout\n", len(bytes))
+					cntn.lock.RLock()
 				}
+				cntn.lock.RUnlock()
 
 				if err != nil {
 					ErrChain <- Error{
@@ -291,6 +293,7 @@ func (cntn Connection) Interact() chan bool {
 			fall:
 				fallthrough
 			default:
+				// Can't encue more data. Say so
 				if len(inputBuffer)+1 >= cap(inputBuffer) {
 					printer.Printf("Refusing to write data. Message cap is being reached.")
 					printer.Printf("Consider exiting this session using Ctrl-b q and\nkilling the bluetooth connection with the kill command")
@@ -317,6 +320,7 @@ func (cntn Connection) Interact() chan bool {
 		for true {
 			select {
 			case cmd = <-sendBuffer:
+				cntn.lock.Lock() // Write lock. Dissallows Read locks until Write lock is released
 				// Send the typed command to the remote and get the response reader
 				if err := cntn.WriteCommand(string(cmd)); err != nil {
 					// Await the reader routine to tell us that it's recieved the indication
@@ -326,6 +330,7 @@ func (cntn Connection) Interact() chan bool {
 						"write_handler",
 					}
 				}
+				cntn.lock.Unlock()
 			}
 		}
 

@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 
 	"golang.org/x/text/language"
@@ -67,12 +68,147 @@ func main() {
 
 	dlog.Println("Starting Bluetooth Control Loop.")
 
+	var (
+		cmdHistory  = make([]string, 0, 256)
+		input       = make([]byte, 0, 256)
+		key         byte
+		firstCombo  bool
+		secondCombo bool
+		cursorPos   int
+		historyPos  int
+	)
+
+	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
+
 	for true {
 		prompt()
-		var input, _ = stdinReader.ReadString('\n')
-		input = strings.TrimRight(input, "\r\n")
 
-		var cmds = strings.Split(input, " ")
+		for key, _ = stdinReader.ReadByte(); key != '\n'; key, _ = stdinReader.ReadByte() {
+			dlog.Printf("0x%X pressed\n", key)
+			switch key {
+			case 0x7F:
+				if cursorPos-1 >= 0 {
+					printer.Printf("\0337")
+					prompt()
+					cursorPos--
+					if cursorPos+1 <= len(input) {
+						input = append(input[:cursorPos], input[cursorPos+1:]...)
+					} else {
+						input = input[:cursorPos]
+					}
+					printer.Printf("%s", input)
+					printer.Printf("\0338")
+					printer.Printf("\033[3D")
+				}
+				continue
+			case 0x09:
+				if cursorPos >= 1 {
+					for key := range commandDescriptions {
+						if strings.HasPrefix(key, string(input)) {
+							prompt()
+							printer.Printf(key)
+							cursorPos = len(key)
+							input = []byte(key)
+						}
+					}
+				} else {
+					prompt()
+				}
+				continue
+			case 0x1B:
+				firstCombo = true
+				continue
+			case 0x5B:
+				secondCombo = true
+				continue
+			case 0x43: // Right arrow
+				if firstCombo && secondCombo && cursorPos+1 <= len(input) {
+					firstCombo = false
+					secondCombo = false
+					printer.Printf("\0337")
+					prompt()
+					printer.Printf("%s", input)
+					printer.Printf("\0338")
+					printer.Printf("\033[3D")
+					cursorPos++
+				} else {
+					dlog.Printf("Not moving cursor")
+					printer.Printf("\0337")
+					prompt()
+					printer.Printf("%s", input)
+					printer.Printf("\0338")
+					printer.Printf("\033[4D")
+				}
+				continue
+			case 0x44: // Left arrow
+				if firstCombo && secondCombo && cursorPos-1 >= 0 {
+					firstCombo = false
+					secondCombo = false
+					printer.Printf("\0337")
+					prompt()
+					printer.Printf("%s", input)
+					printer.Printf("\0338")
+					printer.Printf("\033[5D")
+					cursorPos--
+				} else {
+					dlog.Printf("Not moving cursor")
+					printer.Printf("\0337")
+					prompt()
+					printer.Printf("%s", input)
+					printer.Printf("\0338")
+					printer.Printf("\033[4D")
+				}
+				continue
+			case 0x41: // Up arrow
+				prompt()
+				if firstCombo && secondCombo && historyPos-1 >= 0 {
+					firstCombo = false
+					secondCombo = false
+					historyPos--
+					printer.Printf("%s", cmdHistory[historyPos])
+					input = []byte(cmdHistory[historyPos])
+					cursorPos = len(input)
+				} else {
+					printer.Printf("%s", input)
+				}
+				continue
+			case 0x42: // Down arrow
+				prompt()
+				if firstCombo && secondCombo && historyPos+1 <= len(cmdHistory)-1 {
+					firstCombo = false
+					secondCombo = false
+					historyPos++
+					printer.Printf("%s", cmdHistory[historyPos])
+					input = []byte(cmdHistory[historyPos])
+					cursorPos = len(input)
+				} else {
+					printer.Printf("%s", input)
+				}
+				continue
+			}
+
+			input = append(input, key)
+			cursorPos++
+		}
+
+		// Reset the cursor position
+		cursorPos = 0
+
+		// Convert the input into the command
+		var command = string(input[:len(input)])
+
+		// Update the command history
+		if len(cmdHistory) == 256 {
+			cmdHistory = cmdHistory[1:]
+		} else {
+			historyPos++
+		}
+		cmdHistory = append(cmdHistory, command)
+
+		// Clear the input buffer
+		input = input[:0]
+
+		var cmds = strings.Split(command, " ")
 
 		dlog.Printf("Command %v\n", cmds[0])
 		switch cmds[0] {
@@ -116,6 +252,7 @@ func main() {
 			if err != nil {
 				printer.Printf("%v\n", err)
 			}
+			exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
 		case "info":
 			var err = infoCmd(controller, cmds)
 			if err != nil {
