@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 
-	"github.ibm.com/mmitchell/bluefire/linux/client/bit"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 )
@@ -19,6 +18,9 @@ var (
 	printVersion bool
 	printer      *message.Printer
 	dlog         *log.Logger
+	buildversion string
+	buildmode    string
+	release      = "beta"
 )
 
 func init() {
@@ -40,7 +42,7 @@ func main() {
 
 	if printVersion {
 		dlog.Println("Printing version info and exiting.")
-		printer.Println("alpha")
+		printer.Printf("%s-%s-%s\n", release, buildmode, buildversion)
 		return
 	}
 
@@ -52,7 +54,7 @@ func main() {
 	printer.Println(" | _ )| |\033[38;5;160m(\033[38;5;20m_\033[38;5;160m))( (\033[38;5;20m_\033[38;5;160m))   \033[38;5;20m| |_   \033[38;5;160m(\033[38;5;20m_\033[38;5;160m) ((\033[38;5;20m_\033[38;5;160m)(\033[38;5;20m_\033[38;5;160m))   	\033[38;5;20m")
 	printer.Println(" | _ \\| || || |/ -_)  | __|  | || '_|/ -_)  	")
 	printer.Println(" |___/|_| \\_,_|\\___|  |_|    |_||_|  \\___|  	")
-	printer.Println("\033[0m")
+	printer.Println("\033[m")
 	printer.Println("\033[4m\033[1mUse 'help' to see a list of help topics.\033[m")
 	printer.Println()
 
@@ -61,21 +63,16 @@ func main() {
 		controller   = NewController()
 		stdinReader  = bufio.NewReader(os.Stdin)
 		stdoutWriter = bufio.NewWriter(os.Stdout)
-		cmdRunning   = bit.NewBit()
-		inShell      = bit.NewBit()
 	)
 
 	dlog.Println("Starting Bluetooth Control Loop.")
 
 	for true {
-		cmdRunning.Unset()
 		prompt()
 		var input, _ = stdinReader.ReadString('\n')
 		input = strings.TrimRight(input, "\r\n")
 
 		var cmds = strings.Split(input, " ")
-
-		cmdRunning.Set()
 
 		dlog.Printf("Command %v\n", cmds[0])
 		switch cmds[0] {
@@ -112,14 +109,13 @@ func main() {
 			var err = connectCmd(controller, cmds)
 			if err != nil {
 				printer.Printf("%v\n", err)
+				continue
 			}
 
-			inShell.Set()
 			err = shellCmd(controller, stdinReader, stdoutWriter, cmds)
 			if err != nil {
 				printer.Printf("%v\n", err)
 			}
-			inShell.Unset()
 		case "info":
 			var err = infoCmd(controller, cmds)
 			if err != nil {

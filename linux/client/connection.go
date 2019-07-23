@@ -192,6 +192,7 @@ func (cntn Connection) Interact() chan bool {
 	var (
 		exitIndicate         = make(chan bool) // Signals the caller the threads exited
 		internalExitIndicate = make(chan bool) // Signals the read thread to exit
+		sendBuffer           = make(chan string)
 		savedSttyState       string
 	)
 	// TODO: Investigate using a PTY library to control this stuff
@@ -262,6 +263,7 @@ func (cntn Connection) Interact() chan bool {
 		var (
 			stdinReader = bufio.NewReader(os.Stdin)
 			input       rune
+			inputBuffer = make([]rune, 0, 25)
 		)
 
 		for {
@@ -289,8 +291,34 @@ func (cntn Connection) Interact() chan bool {
 			fall:
 				fallthrough
 			default:
+				if len(inputBuffer)+1 >= cap(inputBuffer) {
+					printer.Printf("Refusing to write data. Message cap is being reached.")
+					printer.Printf("Consider exiting this session using Ctrl-b q and\nkilling the bluetooth connection with the kill command")
+					continue
+				}
+				inputBuffer = append(inputBuffer, input)
+				select {
+				case sendBuffer <- string(inputBuffer[:len(inputBuffer)]):
+					// Reslice. We don't care about stuff not getting GC'ed because
+					// this is small data, and holding onto an extra 256 bytes
+					// won't hurt anyone.
+					//
+					// By this point, we've sen't everything buffered. So clear the
+					// buffer
+					inputBuffer = inputBuffer[:0]
+				default:
+				}
+			}
+		}
+	}()
+
+	go func() {
+		var cmd string
+		for true {
+			select {
+			case cmd = <-sendBuffer:
 				// Send the typed command to the remote and get the response reader
-				if err := cntn.WriteCommand(string(input)); err != nil {
+				if err := cntn.WriteCommand(string(cmd)); err != nil {
 					// Await the reader routine to tell us that it's recieved the indication
 					// from the server that there is content to be read
 					ErrChain <- Error{
@@ -300,6 +328,7 @@ func (cntn Connection) Interact() chan bool {
 				}
 			}
 		}
+
 	}()
 
 	return exitIndicate
@@ -314,7 +343,7 @@ func (cntn Connection) WriteCommand(cmd string) error {
 	)
 
 	dlog.Printf("Writing %v to the write characteristic\n", cmd)
-	if err = cntn.bleClient.WriteCharacteristic(cntn.write, []byte(cmd), true); err != nil {
+	if err = cntn.bleClient.WriteCharacteristic(cntn.write, []byte(cmd), false); err != nil {
 		dlog.Printf("Failed to write %v to the write characteristic\n", cmd)
 		return err
 	}

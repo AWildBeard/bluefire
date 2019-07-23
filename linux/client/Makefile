@@ -1,5 +1,6 @@
 BUILD=go build
-LDFLAGS=
+LDFLAGS=-X main.buildmode=debug
+DATE=$(shell date -j -f "%a %b %d %T %Z %Y" "`date`" "+%s")
 GOOS=
 GOARCH=
 OUT=bluefire
@@ -22,10 +23,11 @@ amd64-linux-env:
 	$(eval GOARCH=amd64)
 
 arm-linux amd64-linux:
+	$(eval LDFLAGS=${LDFLAGS} -X main.buildversion=${DATE})
 	GOOS=${GOOS} GOARCH=${GOARCH} ${BUILD} -ldflags="${LDFLAGS}" -o ${OUT}
 
 release:
-	$(eval LDFLAGS=-w -s)
+	$(eval LDFLAGS=-w -s -X main.buildmode=release)
 
 deploy:
 	scp ${OUT} pi-2:unstable
