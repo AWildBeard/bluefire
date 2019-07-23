@@ -197,19 +197,9 @@ func (cntn Connection) Interact() chan bool {
 		exitIndicate         = make(chan bool) // Signals the caller the threads exited
 		internalExitIndicate = make(chan bool) // Signals the read thread to exit
 		sendBuffer           = make(chan string)
-		savedSttyState       string
 	)
 	// TODO: Investigate using a PTY library to control this stuff
 	// instead of this stty madness
-
-	// Save the TTY state
-	if output, err := exec.Command("stty", "-F", "/dev/tty", "-g").Output(); err == nil {
-		savedSttyState = string(output)
-
-	} else {
-		dlog.Printf("Failed to save stty state: %v\n", err)
-		savedSttyState = "sane"
-	}
 
 	// Bootstrap the TTY to do the cool stuff
 	// Disable character echoing (remote will handle it for us)
@@ -285,10 +275,6 @@ func (cntn Connection) Interact() chan bool {
 
 				// Tell our compatriot thread that we done
 				internalExitIndicate <- true
-
-				// Revert to a sane terminal environment using stty
-				exec.Command("stty", "-F", "/dev/tty", "sane").Run()
-				exec.Command("stty", "-F", "/dev/tty", savedSttyState).Run()
 				return
 			fall:
 				fallthrough

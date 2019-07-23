@@ -99,18 +99,24 @@ func main() {
 					printer.Printf("%s", input)
 					printer.Printf("\0338")
 					printer.Printf("\033[3D")
+				} else {
+					prompt()
 				}
 				continue
 			case 0x09:
 				if cursorPos >= 1 {
+					var output = string(input)
 					for key := range commandDescriptions {
 						if strings.HasPrefix(key, string(input)) {
-							prompt()
-							printer.Printf(key)
+							output = key
 							cursorPos = len(key)
 							input = []byte(key)
+							break
 						}
 					}
+
+					prompt()
+					printer.Printf(output)
 				} else {
 					prompt()
 				}
@@ -252,6 +258,7 @@ func main() {
 			if err != nil {
 				printer.Printf("%v\n", err)
 			}
+			exec.Command("stty", "-F", "/dev/tty", "sane").Run()
 			exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
 		case "info":
 			var err = infoCmd(controller, cmds)
