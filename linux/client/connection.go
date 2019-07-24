@@ -211,7 +211,12 @@ func (cntn Connection) Interact() chan bool {
 
 	// Handling reading
 	go func() {
-		var stdoutWriter = bufio.NewWriter(os.Stdout)
+		var (
+			stdoutWriter = bufio.NewWriter(os.Stdout)
+			bytes        []byte
+			err          error
+		)
+
 		for true {
 			select {
 			// Exit has been called, quit and cleanup
@@ -221,10 +226,6 @@ func (cntn Connection) Interact() chan bool {
 			// operation that they are indicating
 			case <-cntn.remoteIndication:
 				dlog.Printf("Recieved remote indication\n")
-				var (
-					bytes []byte
-					err   error
-				)
 
 				dlog.Printf("Reading from the read characteristic: ")
 				// While the remote has data for us to read, read and store that data to return later.

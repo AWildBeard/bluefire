@@ -193,7 +193,25 @@ func main() {
 				continue
 			}
 
-			input = append(input, key)
+			if cursorPos < len(input) {
+				var leftoverView = input[cursorPos:]
+				var leftover = make([]byte, len(leftoverView))
+
+				for i := range leftoverView {
+					leftover[i] = leftoverView[i]
+				}
+
+				input = append(input[:cursorPos], key)
+				input = append(input, leftover...)
+
+				printer.Printf("\0337")
+				prompt()
+				printer.Printf("%s", input)
+				printer.Printf("\0338")
+			} else {
+				input = append(input, key)
+			}
+
 			cursorPos++
 		}
 
