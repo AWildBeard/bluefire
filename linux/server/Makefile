@@ -3,7 +3,7 @@ LDFLAGS=-X main.buildmode=debug
 DATE=$(shell date '+%s')
 GOOS=
 GOARCH=
-OUT=bluefire
+OUT=bluefire-server
 
 .PHONY: release
 
@@ -30,7 +30,7 @@ release:
 	$(eval LDFLAGS=-w -s -X main.buildmode=release)
 
 deploy:
-	scp ${OUT} pi-2:unstable
+	scp ${OUT} pi-1:unstable
 
 clean:
 	rm -rf ${OUT}

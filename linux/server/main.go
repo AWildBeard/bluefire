@@ -19,19 +19,29 @@ const (
 )
 
 var (
-	debug bool
-	dlog  *log.Logger
-	ilog  *log.Logger
+	debug        bool
+	version      bool
+	buildversion string
+	buildmode    string
+	release      = "beta"
+	dlog         *log.Logger
+	ilog         *log.Logger
 )
 
 func init() {
 	flag.BoolVar(&debug, "debug", false, "Enables debug output for this program")
+	flag.BoolVar(&version, "version", false, "Print version information and exit")
 }
 
 func main() {
 	flag.Parse()
 
 	ilog = log.New(os.Stdout, "", 0)
+
+	if version {
+		ilog.Printf("%s-%s-%s\n", release, buildmode, buildversion)
+		return
+	}
 
 	if debug {
 		dlog = log.New(os.Stderr, "", 0)

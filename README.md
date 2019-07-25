@@ -1,4 +1,6 @@
-# BlueFire is a Command and Control tool that utilizes the Bluetooth Low Energy Protocol
+# BlueFire: a Command and Control tool that utilizes the Bluetooth Low Energy Protocol
+
+![bluefire](https://byte.farm/content/images/size/w2000/2019/07/bluefire.png)
 
 This project consists of several working components. 
 1) The first is the Windows Attack component that is classified as a server. This component uses Windows Platform Libraries to host a BLE GATT server that executes commands passed to it via attribute writes. The Windows Platform component exfiltrates data via GATT attributes aswell.
