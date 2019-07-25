@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.ibm.com/mmitchell/ble"
+	"github.com/AWildBeard/ble"
 )
 
 // ShellServer is the logical type that allows a client to read and execute

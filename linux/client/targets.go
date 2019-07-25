@@ -3,7 +3,7 @@ package main
 import (
 	"sync"
 
-	"github.ibm.com/mmitchell/ble"
+	"github.com/AWildBeard/ble"
 )
 
 // Targets is a data structure to hold our scan data

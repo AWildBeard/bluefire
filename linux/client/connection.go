@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.ibm.com/mmitchell/ble/linux/hci/cmd"
+	"github.com/AWildBeard/ble/linux/hci/cmd"
 
-	"github.ibm.com/mmitchell/ble/linux"
+	"github.com/AWildBeard/ble/linux"
 
-	"github.ibm.com/mmitchell/ble"
+	"github.com/AWildBeard/ble"
 )
 
 // Connections act as a data holder to contain a unlimited

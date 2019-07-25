@@ -7,8 +7,8 @@ import (
 	"log"
 	"os"
 
-	"github.ibm.com/mmitchell/ble"
-	"github.ibm.com/mmitchell/ble/linux"
+	"github.com/AWildBeard/ble"
+	"github.com/AWildBeard/ble/linux"
 )
 
 //changed one char from server data test, changed 3-4th msb to 1

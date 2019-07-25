@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.ibm.com/mmitchell/ble"
-	"github.ibm.com/mmitchell/ble/linux"
+	"github.com/AWildBeard/ble"
+	"github.com/AWildBeard/ble/linux"
 )
 
 var (

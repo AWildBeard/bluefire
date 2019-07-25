@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.ibm.com/mmitchell/ble"
-	"github.ibm.com/mmitchell/ble/linux/hci/cmd"
+	"github.com/AWildBeard/ble"
+	"github.com/AWildBeard/ble/linux/hci/cmd"
 )
 
 var (
