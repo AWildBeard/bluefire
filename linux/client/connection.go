@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.ibm.com/mmitchell/ble/linux/hci/cmd"
 
@@ -87,11 +88,11 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 
 	// Initiate the connection
 	dlog.Printf("Dialing %v\n", addr.String())
-	if newConnection.bleClient, err = dev.Dial(cntx, addr); err == nil {
+	if newConnection.bleClient, err = dev.Dial(ble.WithSigHandler(context.WithTimeout(context.Background(), 5*time.Second)), addr); err == nil {
 		dlog.Printf("Connected to %v\n", addr.String())
 	} else {
 		dlog.Printf("Failed to connect to %v: %v\n", addr.String(), err)
-		goto fail
+		goto hardFail
 	}
 
 	// Must declare after a new connection has been created
@@ -186,6 +187,7 @@ func NewConnection(dev *linux.Device, addr ble.Addr) (Connection, error) {
 fail:
 	// Be sure to close the BLE connection on a bad exit
 	newConnection.bleClient.CancelConnection()
+hardFail:
 	return Connection{}, err // This is a bad return
 }
 
@@ -230,7 +232,10 @@ func (cntn Connection) Interact() chan bool {
 				dlog.Printf("Reading from the read characteristic: ")
 				// While the remote has data for us to read, read and store that data to return later.
 				cntn.lock.RLock()
-				for bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read); err == nil && len(bytes) > 0 || len(bytes) == 1 && bytes[0] == 0; bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read) {
+				for bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read); err == nil && len(bytes) > 0; bytes, err = cntn.bleClient.ReadCharacteristic(cntn.read) {
+					if len(bytes) == 1 && bytes[0] == 0 {
+						break
+					}
 					cntn.lock.RUnlock()
 					dlog.Printf("Writing %v bytes to stdout\n", len(bytes))
 					stdoutWriter.Write(bytes)
